@@ -1,0 +1,141 @@
+{
+  "routing": {
+    "name": "enterprise-secure-access",
+    "GlobalProxy": "false",
+    "RouteOrder": "block-proxy-direct",
+    "RemoteDNSType": "DoU",
+    "RemoteDNSDomain": "internal.corp",
+    "RemoteDNSIP": "10.50.10.10",
+    "DomesticDNSType": "DoH",
+    "DomesticDNSDomain": "https://dns.example.com/query",
+    "DomesticDNSIP": "1.1.1.1",
+    "Geoipurl": "https://example.com/data/geoip.dat",
+    "Geositeurl": "https://example.com/data/geosite.dat",
+    "LastUpdated": "2026-04-14",
+    "DnsHosts": {
+      "dns.example.com": "1.1.1.1",
+      "gateway.internal.corp": "10.50.10.1"
+    },
+    "DirectSites": [
+      "geosite:google",
+      "geosite:microsoft",
+      "geosite:private",
+      "domain:internal.corp",
+      "regexp:.*\\.local$"
+    ],
+    "DirectIp": [
+      "geoip:private",
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16"
+    ],
+    "ProxyIp": [
+      "10.50.0.0/16",
+      "10.60.0.0/16",
+      "172.20.0.0/14"
+    ],
+    "DomainStrategy": "IPIfNonMatch",
+    "FakeDNS": "false",
+    "UseChunkFiles": "true"
+  },
+  "templates": {
+    "corp-vpn-v1": {
+      "country": "US",
+      "nodes": ["hq-gateway-01"],
+      "xray": {
+        "protocol": "vless",
+        "settings": {
+          "address": "vpn-hq.example.net",
+          "port": 443,
+          "encryption": "none",
+          "flow": "xtls-rprx-vision"
+        },
+        "streamSettings": {
+          "network": "raw",
+          "security": "tls",
+          "tlsSettings": {
+            "serverName": "vpn-hq.example.net",
+            "allowInsecure": false,
+            "fingerprint": "chrome",
+            "alpn": ["h2", "http/1.1"]
+          }
+        }
+      }
+    },
+    "corp-vpn-v2": {
+      "country": "UK",
+      "nodes": ["branch-office-uk"],
+      "xray": {
+        "protocol": "vless",
+        "settings": {
+          "address": "vpn-uk.example.net",
+          "port": 443,
+          "encryption": "none",
+          "flow": "xtls-rprx-vision"
+        },
+        "streamSettings": {
+          "network": "xhttp",
+          "security": "tls",
+          "tlsSettings": {
+            "serverName": "vpn-uk.example.net",
+            "fingerprint": "chrome",
+            "alpn": ["h3", "h2"]
+          },
+          "xhttpSettings": {
+            "mode": "stream-one",
+            "path": "/internal-access-bridge/"
+          }
+        }
+      }
+    },
+    "secure-enclave": {
+      "country": "DE",
+      "nodes": ["secure-zone-alpha"],
+      "xray": {
+        "protocol": "vless",
+        "settings": {
+          "address": "secure.example.net",
+          "port": 443,
+          "encryption": "none",
+          "flow": "xtls-rprx-vision"
+        },
+        "streamSettings": {
+          "network": "raw",
+          "security": "reality",
+          "realitySettings": {
+            "dest": "internal-app.example.net",
+            "fingerprint": "chrome",
+            "serverNames": [
+              "internal-app.example.net"
+            ],
+            "publicKey": "base64-encoded-public-key-placeholder"
+          }
+        },
+        "mux": {
+          "enabled": true,
+          "concurrency": 8
+        }
+      }
+    }
+  },
+  "users": [
+    {
+      "name": "employee-01",
+      "psub": "sub-key-dev-01",
+      "configs": [
+        { "template": "corp-vpn-v1", "xray": { "settings": { "id": "uuid-placeholder-01" } } },
+        { "template": "corp-vpn-v2", "xray": { "settings": { "id": "uuid-placeholder-01" } } },
+        { "template": "secure-enclave", "xray": { "settings": { "id": "uuid-placeholder-01" }, "streamSettings": { "realitySettings": { "shortId": "short-id-01" } } } }
+      ]
+    },
+    {
+      "name": "employee-02",
+      "psub": "sub-key-admin-02",
+      "configs": [
+        { "template": "corp-vpn-v1", "xray": { "settings": { "id": "uuid-placeholder-02" } } },
+        { "template": "corp-vpn-v2", "xray": { "settings": { "id": "uuid-placeholder-02" } } },
+        { "template": "secure-enclave", "xray": { "settings": { "id": "uuid-placeholder-02" }, "streamSettings": { "realitySettings": { "shortId": "short-id-02" } } } }
+      ]
+    }
+  ]
+}

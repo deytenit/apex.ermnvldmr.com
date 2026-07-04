@@ -1,0 +1,9 @@
+#!/bin/bash
+# apex commons pre-commit: lint staged docker-compose files.
+if [[ -n "${APEX_COMMONS:-}" ]]; then
+    APEX_CMD="$APEX_COMMONS/apex"
+else
+    APEX_CMD="$(git rev-parse --show-toplevel)/commons/apex"
+    [[ -x "$APEX_CMD" ]] || APEX_CMD="$(git rev-parse --show-toplevel)/apex"  # standalone commons repo
+fi
+"$APEX_CMD" utils/lint-docker-compose --hook || { echo "[pre-commit] Aborting: apex utils/lint-docker-compose failed."; exit 1; }

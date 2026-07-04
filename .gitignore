@@ -1,0 +1,17 @@
+# OS / editor noise
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime / secrets (never in commons)
+*.log
+*.env
+.env
+*.bak
