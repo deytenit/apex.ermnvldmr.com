@@ -1,0 +1,180 @@
+# commons/compositions/apex/docker-compose.yml
+# The shared apex CORE composition. Consumed by each node via include: (SP3).
+# FULLY ${env}-parameterized; NO './' host paths (relative paths in an included file
+# resolve against THIS dir — always use absolute ${APEX_*} vars). The engine exports
+# APEX_TIER*/APEX_TIER*_SHARED/APEX_TIER_ROOT*/APEX_SUBNET/APEX_NODE_FQDN at invoke.
+x-environment: &shared-environment
+  TZ: "Europe/Moscow"
+
+services:
+  # --- edge (host network) ---
+  xray:
+    image: ghcr.io/xtls/xray-core:26.3.27
+    container_name: apex-xray
+    volumes:
+      - ${APEX_TIER1}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
+      - ${APEX_TIER1_SHARED}/apex/letsencrypt:/etc/letsencrypt/live:ro
+      - ${APEX_TIER3_SHARED}/apex/xray/log:/var/log/xray/
+      - ${APEX_TIER3_SHARED}/apex/xray/shm:/dev/shm/xray/
+    environment:
+      <<: *shared-environment
+    network_mode: "host"
+    command: ["-c", "/etc/xray/config.jsonc"]
+    restart: unless-stopped
+    user: "0:0"
+    security_opt:
+      - no-new-privileges:true
+
+  # --- backups (host network, manual profile, one-shot) ---
+  restic:
+    image: restic/restic:0.18.1
+    container_name: apex-restic
+    profiles: [manual]
+    volumes:
+      - ${APEX_TIER3}/restic/cache:/var/restic-cache
+      # FIX (Task 1.11): mount the backed-up tier roots read-only so `restic backup
+      # /data/@tier1 /data/@tier2` actually snapshots data (was missing today).
+      - ${APEX_TIER_ROOT1}:/data/@tier1:ro
+      - ${APEX_TIER_ROOT2}:/data/@tier2:ro
+    environment:
+      <<: *shared-environment
+      RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY}"
+      RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD?error}"
+      AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID?error}"
+      AWS_SECRET_ACCESS_KEY: "${APEX_RESTIC_AWS_SECRET_ACCESS_KEY?error}"
+      AWS_REGION: "ru-central1"
+      AWS_ENDPOINT_URL: "https://storage.yandexcloud.net/"
+      RESTIC_COMPRESSION: "auto"
+      RESTIC_CACHE_DIR: /var/restic-cache
+    network_mode: "host"
+    entrypoint: ["restic"]
+
+  # --- docker socket proxy ---
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:0
+    container_name: apex-socket-proxy
+    user: "0:0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: 1
+      SERVICES: 1
+      TASKS: 1
+    networks:
+      socket: {}
+    restart: unless-stopped
+
+  # --- edge reverse proxy (the core anchor on direct) ---
+  traefik:
+    image: traefik:3.6
+    container_name: apex-traefik
+    user: "${APEX_UID?error}:${APEX_GID?error}"
+    group_add:
+      - "${APEX_SHARED_GID?error}"
+    depends_on:
+      - socket-proxy
+    volumes:
+      - ${APEX_TIER1_SHARED}/apex/traefik/letsencrypt:/letsencrypt
+      - ${APEX_TIER3}/traefik/logs:/logs
+      - ${APEX_TIER1}/traefik/dynamic:/etc/traefik/dynamic:ro
+    environment:
+      <<: *shared-environment
+      CF_DNS_API_TOKEN: "${APEX_TRAEFIK_CF_DNS_API_TOKEN?error}"
+      UMASK: "0002"
+    ports:
+      - '0.0.0.0:80:80'
+      - '0.0.0.0:443:443/tcp'
+      - '0.0.0.0:443:443/udp'
+    networks:
+      direct:
+        ipv4_address: ${APEX_TRAEFIK_DIRECT_IP?error}
+      enclave: {}
+      socket: {}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--api.dashboard=true"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--accesslog.filepath=/logs/access.log"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--providers.docker=true"
+      - "--providers.docker.network=enclave"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.docker.endpoint=tcp://apex-socket-proxy:2375"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entryPoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.asDefault=true"
+      - "--entrypoints.websecure.http.tls.certresolver=cloudflare"
+      - "--entrypoints.websecure.http3"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge=true"
+      - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.cloudflare.acme.email=${APEX_TRAEFIK_ACME_EMAIL?error}"
+      - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.apex-traefik.rule=Host(`${APEX_NODE_FQDN}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
+      - "traefik.http.middlewares.xray-enclave.ipallowlist.sourcerange=198.18.0.0/16"
+      - "traefik.http.routers.apex-traefik.middlewares=xray-enclave@docker"
+      - "traefik.http.routers.apex-traefik.service=api@internal"
+      # adguard route (backend only present when the adguard profile is active)
+      - "traefik.http.routers.apex-adguard.rule=Host(`${APEX_NODE_FQDN}`) && PathPrefix(`/adguard`)"
+      - "traefik.http.routers.apex-adguard.middlewares=apex-adguard-strip-prefix"
+      - "traefik.http.middlewares.apex-adguard-strip-prefix.stripprefix.prefixes=/adguard"
+      - "traefik.http.routers.apex-adguard.service=apex-adguard"
+      - "traefik.http.services.apex-adguard.loadbalancer.server.port=3000"
+    security_opt:
+      - no-new-privileges:true
+
+  # --- optional: adguard (shares traefik netns) ---
+  adguard:
+    image: adguard/adguardhome:v0.107.72
+    container_name: apex-adguard
+    profiles: [adguard]
+    volumes:
+      - ${APEX_TIER1}/adguard/data:/opt/adguardhome/work
+      - ${APEX_TIER1}/adguard/conf:/opt/adguardhome/conf
+    environment:
+      <<: *shared-environment
+    network_mode: "service:traefik"
+    restart: unless-stopped
+    cap_add:
+      - NET_BIND_SERVICE
+      - SYS_NICE
+      - CAP_CHOWN
+    security_opt:
+      - no-new-privileges:true
+
+  # --- optional: loki log aggregation (node-local, enclave) ---
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: apex-loki
+    profiles: [loki]
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ${APEX_TIER1}/loki/config.yaml:/etc/loki/config.yaml:ro
+      - ${APEX_TIER2}/loki/data:/loki
+    networks:
+      enclave: {}
+    restart: unless-stopped
+    user: "${APEX_UID?error}:${APEX_GID?error}"
+
+networks:
+  direct:
+    name: direct
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${APEX_SUBNET?error}
+  enclave:
+    name: enclave
+    driver: bridge
+    internal: true
+  socket:
+    name: socket
+    driver: bridge
+    internal: true

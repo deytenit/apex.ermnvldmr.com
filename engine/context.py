@@ -28,6 +28,16 @@ class Paths:
     def _stier(self, n: int) -> str:
         return os.path.realpath(os.path.join(self.core, f"@tier{n}", "shared"))
 
+    def _root_tier(self, n: int) -> str:
+        return os.path.realpath(os.path.join(self.compositions, f"@tier{n}"))
+
+    @property
+    def root_tier1(self): return self._root_tier(1)
+    @property
+    def root_tier2(self): return self._root_tier(2)
+    @property
+    def root_tier3(self): return self._root_tier(3)
+
     @property
     def tier1(self): return self._tier(1)
     @property
@@ -97,5 +107,8 @@ class Context:
                 "APEX_TIER1_SHARED": self.paths.stier1,
                 "APEX_TIER2_SHARED": self.paths.stier2,
                 "APEX_TIER3_SHARED": self.paths.stier3,
+                "APEX_TIER_ROOT1": self.paths.root_tier1,
+                "APEX_TIER_ROOT2": self.paths.root_tier2,
+                "APEX_TIER_ROOT3": self.paths.root_tier3,
             })
         return v
