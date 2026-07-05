@@ -28,4 +28,30 @@ action to its bash source and the behaviors that must match.
 - No <node> arg; identity from FQDN + node.env.
 - restic core service gains read-only /data/@tier1,2 mounts (makes existing backup command functional).
 - ufw markers self-heal (delete ROOT + APEX blocks before inject).
-- envsubst -> string.Template.safe_substitute; wget/curl download -> urllib.
+- envsubst -> string.Template.safe_substitute; wget/curl download -> urllib. Unset template
+  vars stay LITERAL (envsubst emptied them) — typos surface instead of silently blanking.
+- crowdsec install auto-confirms (`apt-get install -y`; bash ran promptful `apt install`,
+  which blocked on a tty and aborted non-interactive runs).
+- pre-commit staged-compose pathspec widened to `*docker-compose.yml` — the old
+  `*.docker-compose.yml`/root-anchored patterns never matched nested compose files.
+- anchor-IP validation in utils/lint-docker-compose is a planned addition (SP3 §6.2).
+- new opt-in `--dry-run` flags on configure/* have no bash counterpart; the default
+  (flag absent) path is the ported behavior.
+- ufw/crowdsec deploys keep a timestamped `.bak` next to overwritten system files
+  (bash: none / `/tmp`) as a rollback net; tiers/useradd `.env` rewrites deliberately do
+  NOT (no secret-bearing copies).
+- non-conventional tool exit codes normalize to 1 (bash sometimes propagated e.g.
+  apt-get's 100); 64/65/66 conventions preserved.
+
+## Core-compose consolidation deltas (beyond the rename)
+- icarus: traefik no longer publishes 53/tcp+udp (AdGuard DNS) from the shared file —
+  restored via an icarus-only override layered in the node repo's include (Phase 2).
+- icarus: ACME propagation-tuning flags and DEBUG log level drop to the shared defaults;
+  traefik now runs noroot (APEX_UID) with file provider + HTTP/3 like daedalus.
+- morpheus: gains apex-xray (design: xray is a core service on every node) — a config
+  must exist at `${APEX_TIER1}/xray/data/config.jsonc` before cutover or it crash-loops.
+- morpheus: dashboard auth changes basicauth (TRAEFIK_INTERNAL_API_AUTH) -> enclave IP
+  allowlist; the adguard router labels exist without a backend (502, was 404, on /adguard).
+- restic: per-node selective tier2 mounts replaced by whole-tier-root RO mounts
+  (superset; snapshot paths preserved); RESTIC_COMPRESSION per-node via
+  `APEX_RESTIC_COMPRESSION` (default auto).

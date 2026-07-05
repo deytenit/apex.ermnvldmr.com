@@ -23,6 +23,11 @@ def run(ctx, args):
         if (cp.stdout or "").strip():
             log.error(f"Commons submodule at {commons} has uncommitted changes. Aborting.")
             raise SystemExit(1)
+        if not os.path.isdir(ctx.paths.compositions):
+            # Without this, `git add -A` would stage a deleted node tree and an
+            # unattended cron run would commit + force-push the deletion.
+            log.error(f"Directory '{ctx.paths.compositions}' does not exist. Cannot sync.")
+            raise SystemExit(1)
         branch = f"sync/{node}"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if ctx.sys.ok(["git", "-C", repo, "rev-parse", "--verify", branch]):
@@ -45,7 +50,8 @@ def run(ctx, args):
         git("submodule", "update", "--init", "--recursive")
         git("push", "--force-with-lease", "origin", branch)
         log.success(f"Pushed {branch}.")
-        ctx.notify.success(TITLE, url, f"Sync to '{branch}' completed.", node)
+        if not ctx.notify.success(TITLE, url, f"Sync to '{branch}' completed.", node):
+            raise SystemExit(1)
     except SystemExit:
         raise
     except Exception as e:

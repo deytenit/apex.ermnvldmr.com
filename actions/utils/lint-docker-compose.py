@@ -50,12 +50,22 @@ def _validate_anchor_ips(ctx) -> int:
         f = os.path.join(comp, proj, "docker-compose.yml")
         if not os.path.isfile(f):
             continue
-        for m in re.finditer(r"ipv4_address:\s*([0-9.]+)", open(f).read()):
+        try:
+            text = open(f).read()
+        except OSError as e:
+            ctx.log.error(f"Cannot read {f}: {e}"); rc = 1
+            continue
+        for m in re.finditer(r"ipv4_address:\s*([0-9.]+)", text):
             ip = m.group(1)
+            try:
+                addr = ipaddress.ip_address(ip)
+            except ValueError:   # e.g. "10.0.0." — a lint error, not a crash
+                ctx.log.error(f"Malformed anchor IP {ip!r} in {proj}"); rc = 1
+                continue
             if ip in seen:
                 ctx.log.error(f"Duplicate anchor IP {ip} in {proj} and {seen[ip]}"); rc = 1
             seen[ip] = proj
-            if subnet is not None and ipaddress.ip_address(ip) not in subnet:
+            if subnet is not None and addr not in subnet:
                 ctx.log.error(f"Anchor IP {ip} ({proj}) not in node subnet {subnet}"); rc = 1
     if rc == 0:
         ctx.log.info("Anchor IP validation passed.")

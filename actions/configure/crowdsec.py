@@ -20,5 +20,5 @@ def run(ctx, args):
         if os.path.isfile(bouncer) and not ctx.sys.ok(
                 ["bash", "-c", "dpkg -l | grep -q crowdsec-firewall-bouncer-iptables"]):
             ctx.log.info("Installing crowdsec-firewall-bouncer-iptables...")
-            ctx.sys.sudo(["apt-get", "install", "-y", "crowdsec-firewall-bouncer-iptables"])
+            ctx.sys.install_packages(["crowdsec-firewall-bouncer-iptables"])
     ctx.log.success("Configured crowdsec.")

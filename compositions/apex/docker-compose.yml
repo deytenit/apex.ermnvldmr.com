@@ -38,13 +38,15 @@ services:
       - ${APEX_TIER_ROOT2}:/data/@tier2:ro
     environment:
       <<: *shared-environment
-      RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY}"
+      RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY?error}"
       RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD?error}"
       AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID?error}"
       AWS_SECRET_ACCESS_KEY: "${APEX_RESTIC_AWS_SECRET_ACCESS_KEY?error}"
       AWS_REGION: "ru-central1"
       AWS_ENDPOINT_URL: "https://storage.yandexcloud.net/"
-      RESTIC_COMPRESSION: "auto"
+      # per-node override (icarus historically ran "max" for manual invocations;
+      # scheduled backups always force --compression auto on the CLI)
+      RESTIC_COMPRESSION: "${APEX_RESTIC_COMPRESSION:-auto}"
       RESTIC_CACHE_DIR: /var/restic-cache
     network_mode: "host"
     entrypoint: ["restic"]

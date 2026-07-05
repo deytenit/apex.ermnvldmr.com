@@ -13,7 +13,12 @@ def run(ctx, args):
     docker_dir = os.path.join(cfg, "docker")
     host_dir = os.path.join(cfg, "host")
     ctx.log.info("Configuring UFW rules...")
-    if not os.path.isdir(docker_dir):
+    # Mirrors the bash branch structure: host dir is passed unconditionally (a missing
+    # one exits 66 inside apply); both dirs missing = warn + success, like bash.
+    if os.path.isdir(docker_dir):
+        ctx.ufw.apply(docker_dir, host_dir, dry_run=args.dry_run)
+    else:
         ctx.log.warn(f"Docker rules dir not found at {docker_dir}. Skipping ufw-docker rules.")
-    ctx.ufw.apply(docker_dir, host_dir if os.path.isdir(host_dir) else None, dry_run=args.dry_run)
+        if os.path.isdir(host_dir):
+            ctx.ufw.apply(docker_dir, host_dir, dry_run=args.dry_run)
     ctx.log.success("Configured ufw.")

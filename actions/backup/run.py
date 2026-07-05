@@ -40,7 +40,8 @@ def run(ctx, args):
                   "--keep-monthly", "12", check=False).returncode != 0:
             ctx.notify.error(TITLE, url, "restic forget/prune failed", node); raise SystemExit(1)
         log.success("Restic backup completed.")
-        ctx.notify.success(TITLE, url, f"Restic backup + retention succeeded for {node}", node)
+        if not ctx.notify.success(TITLE, url, f"Restic backup + retention succeeded for {node}", node):
+            raise SystemExit(1)   # bash exited 1 when the success telegram failed to send
     except SystemExit:
         raise
     except Exception as e:

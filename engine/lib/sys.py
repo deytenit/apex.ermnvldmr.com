@@ -31,7 +31,8 @@ class Sys:
     def service_exists(self, name: str) -> bool:
         cp = self.run(["systemctl", "list-unit-files", "--type=service"],
                       check=False, capture=True)
-        return f"{name}.service" in (cp.stdout or "")
+        return any(line.startswith(f"{name}.service")
+                   for line in (cp.stdout or "").splitlines())
 
     def service_is_active(self, name: str) -> bool:
         return self.ok(["systemctl", "is-active", "--quiet", name])

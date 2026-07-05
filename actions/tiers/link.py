@@ -16,7 +16,10 @@ def run(ctx, args):
              os.path.realpath(args.tier3_path)]
 
     def confirm(msg):
-        return input(f"{msg} [y/N]: ").strip().lower() in ("y", "yes")
+        try:
+            return input(f"{msg} [y/N]: ").strip().lower() in ("y", "yes")
+        except EOFError:      # non-interactive stdin = decline, like bash `read` at EOF
+            return False
 
     def safe_remove(link, desc):
         if os.path.islink(link):

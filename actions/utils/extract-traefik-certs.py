@@ -15,10 +15,11 @@ def run(ctx, args):
         log.error(f"Source file not found: {args.source_acme}"); raise SystemExit(1)
     abs_src = os.path.realpath(args.source_acme)
     src_dir, src_file = os.path.dirname(abs_src), os.path.basename(abs_src)
-    ctx.sys.sudo(["mkdir", "-p", args.dest_dir])
-    abs_dest = os.path.realpath(args.dest_dir)
-    log.info(f"Extracting certs: {abs_src} -> {abs_dest}")
     try:
+        # Inside the notify envelope: bash armed its Telegram ERR trap before this mkdir.
+        ctx.sys.sudo(["mkdir", "-p", args.dest_dir])
+        abs_dest = os.path.realpath(args.dest_dir)
+        log.info(f"Extracting certs: {abs_src} -> {abs_dest}")
         ctx.sys.run(["docker", "run", "--rm", "-v", f"{src_dir}:/data", "-v", f"{abs_dest}:/output",
                      "ldez/traefik-certs-dumper:v2.9.3", "file", "--version", "v3",
                      "--source", f"/data/{src_file}", "--dest", "/output", "--domain-subdir=true",

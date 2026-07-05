@@ -90,6 +90,10 @@ class Host:
         tmp = tempfile.NamedTemporaryFile("w", delete=False)
         tmp.write(content)
         tmp.close()
+        # 0644 like the bash renders (umask-022 redirect); mkstemp's 0600 would make
+        # freshly created units/configs owner-only. Overwrites via sudo cp keep the
+        # destination's existing mode either way.
+        os.chmod(tmp.name, 0o644)
         if sudo:
             self.sys.sudo(["mkdir", "-p", os.path.dirname(path)])
             self.sys.sudo(["cp", tmp.name, path])

@@ -9,7 +9,10 @@ class Systemd:
         self.log, self.sys, self.tpl, self.host = log, sys_, tpl, host
 
     def deploy_units(self, configs_subdir: str, vars: dict, dry_run: bool = False) -> None:
-        rendered = self.tpl.render_dir(configs_subdir, vars)
+        # Top-level, non-hidden files only — the bash glob ("$CONFIG_DIR"/* + [[ -f ]])
+        # never recursed nor picked up dotfiles like .gitkeep.
+        rendered = {rel: c for rel, c in self.tpl.render_dir(configs_subdir, vars).items()
+                    if "/" not in rel and not rel.startswith(".")}
         if not rendered:
             self.log.warn(f"No systemd units found under configs/{configs_subdir}.")
             return

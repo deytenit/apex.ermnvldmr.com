@@ -22,9 +22,11 @@ def _env_val(path, key):
 def run(ctx, args):
     log, s = ctx.log, ctx.sys
     comp = ctx.paths.compositions
-    tiers = [os.path.realpath(args.tier1_path or ctx.paths.tier1),
-             os.path.realpath(args.tier2_path or ctx.paths.tier2),
-             os.path.realpath(args.tier3_path or ctx.paths.tier3)]
+    # Defaults are the TIER ROOTS (compositions/@tierN, bash $ROOT_TIERn) — NOT
+    # ctx.paths.tierN, which is the apex core project's data dir one level deeper.
+    tiers = [os.path.realpath(args.tier1_path or ctx.paths.root_tier1),
+             os.path.realpath(args.tier2_path or ctx.paths.root_tier2),
+             os.path.realpath(args.tier3_path or ctx.paths.root_tier3)]
 
     cp = s.run(["getent", "group", SHARED_GROUP], check=False, capture=True)
     if cp.returncode != 0:
@@ -33,10 +35,12 @@ def run(ctx, args):
     log.info("Ensuring base structures owned by root...")
     for tp in tiers:
         s.sudo(["chown", "root:root", tp])
-        for sub in ("shared", "node-infra"):
-            p = os.path.join(tp, sub)
-            if os.path.isdir(p):
-                s.sudo(["chown", "-R", "root:root", p])
+        shared = os.path.join(tp, "shared")
+        if os.path.isdir(shared):       # dir inode only — recursing would clobber
+            s.sudo(["chown", "root:root", shared])  # skipped projects' shared subtrees
+        infra = os.path.join(tp, "node-infra")
+        if os.path.isdir(infra):
+            s.sudo(["chown", "-R", "root:root", infra])
 
     for proj in sorted(os.listdir(comp)):
         full = os.path.join(comp, proj)

@@ -12,6 +12,11 @@ METADATA = Meta(summary="Orchestrate docker compose across the node (apex core f
 
 def run(ctx, args):
     log, comp, action = ctx.log, ctx.paths.compositions, args.action
+    # argparse.REMAINDER swallows flags placed after the action, so strip --dry-run
+    # out of the passthrough args like bash did ("apex compose up --dry-run" must
+    # preview, not hand docker compose its own --dry-run).
+    extra = [a for a in (args.extra or []) if a != "--dry-run"]
+    dry_run = args.dry_run or len(extra) != len(args.extra or [])
     env = dict(os.environ)
     env.update({k: v for k, v in ctx.vars().items() if k.startswith("APEX_")})
 
@@ -30,8 +35,8 @@ def run(ctx, args):
         for ef in (".env", "apex.env"):
             if os.path.isfile(os.path.join(dirpath, ef)):
                 base += ["--env-file", ef]
-        cmd = base + (["up", "-d"] if action == "up" else [action]) + list(args.extra or [])
-        if args.dry_run:
+        cmd = base + (["up", "-d"] if action == "up" else [action]) + extra
+        if dry_run:
             log.info(f"[DRY-RUN] (cd {dirpath} && {' '.join(cmd)})")
         else:
             log.info(f"{action} {name}...")

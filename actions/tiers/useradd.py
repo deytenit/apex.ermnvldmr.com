@@ -70,5 +70,7 @@ def _inject_env(ctx, env_path, uid, gid, shared_gid):
         new = re.sub(re.escape(START) + r".*?" + re.escape(END) + r"\n", block, text, flags=re.S)
     else:
         new = block + "\n" + text
-    ctx.host.write_file(actual, new, backup=True, sudo=True)
+    # backup=False: bash never left copies; a timestamped .bak would pile up a
+    # secret-bearing .env duplicate per run next to the bind-mounted project dir.
+    ctx.host.write_file(actual, new, backup=False, sudo=True)
     ctx.log.success(f"Updated {actual} with APEX_UID/GID/SHARED_GID")
