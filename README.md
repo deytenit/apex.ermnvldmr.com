@@ -3,6 +3,8 @@
 The **commons** of the apex fleet: a stock-python engine (`apex <group>/<action>`) and
 the shared core docker-compose, consumed by every node as the `commons/` git submodule.
 
+Full documentation: [docs.ermnvldmr.com/en/apex](https://docs.ermnvldmr.com/en/apex/).
+
 ## Layout
 - `apex` — launcher (python3, stdlib only); node `init.sh` symlinks it onto `PATH`.
 - `engine/` — the runner: CLI, identity, overlay, context, and the `ctx.*` helper library.
