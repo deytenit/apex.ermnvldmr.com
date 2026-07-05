@@ -19,7 +19,7 @@ action to its bash source and the behaviors that must match.
 | tiers/useradd | actions/tiers/useradd | noroot-<proj> system users; noroot-shared group; APEX_UID/GID block in .env |
 | tiers/chown | actions/tiers/chown | {tier}/{proj}=uid:gid; {tier}/shared/{proj}=uid:sgid+sticky; base=root:root |
 | utils/extract-traefik-certs | actions/utils/extract-traefik-certs | traefik-certs-dumper v3; 600 perms; chown caller |
-| utils/generate-happ-subscriptions | actions/utils/generate-happ-subscriptions | build image; run generator input->output |
+| utils/generate-happ-subscriptions | actions/utils/generate-happ-subscriptions | MOVED to daedalus proprietaries (node-specific tooling; commons keeps only shared stuff) |
 | utils/lint-docker-compose | actions/utils/lint-docker-compose | dclint --fix via docker; --hook staged-only + restage; + anchor-IP check |
 | compose | actions/compose | apex core first then services alpha; reverse on down; --dry-run; extra passthrough |
 
@@ -48,8 +48,10 @@ action to its bash source and the behaviors that must match.
   restored via an icarus-only override layered in the node repo's include (Phase 2).
 - icarus: ACME propagation-tuning flags and DEBUG log level drop to the shared defaults;
   traefik now runs noroot (APEX_UID) with file provider + HTTP/3 like daedalus.
-- morpheus: gains apex-xray (design: xray is a core service on every node) — a config
-  must exist at `${APEX_TIER1}/xray/data/config.jsonc` before cutover or it crash-loops.
+- xray is profile-gated (`xray` in COMPOSE_PROFILES): daedalus + icarus opt in,
+  morpheus does not (it never ran xray — owner decision 2026-07-05).
+- loki (profile `loki`, no node opts in yet) is exposed via traefik at
+  `https://<node-fqdn>/loki` behind basicauth (`APEX_LOKI_BASIC_AUTH` in the node .env).
 - morpheus: dashboard auth changes basicauth (TRAEFIK_INTERNAL_API_AUTH) -> enclave IP
   allowlist; the adguard router labels exist without a backend (502, was 404, on /adguard).
 - restic: per-node selective tier2 mounts replaced by whole-tier-root RO mounts

@@ -9,8 +9,10 @@ the shared core docker-compose, consumed by every node as the `commons/` git sub
 - `actions/` — grouped actions; the path IS the name (`configure/ufw`, `tiers/link`, …).
 - `compositions/apex/docker-compose.yml` — the shared, `${env}`-parameterized core compose.
 - `vendor/` — pinned pure-python third-party (empty; see `vendor/VENDORED.md`).
-- `source/` — independent containerized tools (happ subscription generator).
 - `tests/` — stdlib `unittest` suite (`tests/run.sh`).
+
+Node-specific tooling lives in each node repo's `proprietaries/` — commons holds only
+what every node shares.
 
 ## Usage (on a node)
 `apex` acts on the **local checkout** — no `<node>` argument. Identity comes from the

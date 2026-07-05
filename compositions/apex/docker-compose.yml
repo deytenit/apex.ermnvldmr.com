@@ -7,10 +7,11 @@ x-environment: &shared-environment
   TZ: "Europe/Moscow"
 
 services:
-  # --- edge (host network) ---
+  # --- edge (host network; profile-gated — a node opts in via COMPOSE_PROFILES) ---
   xray:
     image: ghcr.io/xtls/xray-core:26.3.27
     container_name: apex-xray
+    profiles: [xray]
     volumes:
       - ${APEX_TIER1}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
       - ${APEX_TIER1_SHARED}/apex/letsencrypt:/etc/letsencrypt/live:ro
@@ -164,6 +165,14 @@ services:
       enclave: {}
     restart: unless-stopped
     user: "${APEX_UID?error}:${APEX_GID?error}"
+    labels:
+      # /loki/* is loki's native API prefix — no strip needed. basicauth users come
+      # from the node's uncommitted .env (only needed when the loki profile is on).
+      - "traefik.enable=true"
+      - "traefik.http.routers.apex-loki.rule=Host(`${APEX_NODE_FQDN}`) && PathPrefix(`/loki`)"
+      - "traefik.http.routers.apex-loki.middlewares=apex-loki-auth"
+      - "traefik.http.middlewares.apex-loki-auth.basicauth.users=${APEX_LOKI_BASIC_AUTH}"
+      - "traefik.http.services.apex-loki.loadbalancer.server.port=3100"
 
 networks:
   direct:
