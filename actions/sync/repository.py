@@ -1,10 +1,10 @@
 # actions/sync/repository.py
-"""Port of sync/repository — capture-up commit + rebase onto origin/trunk + force-push."""
+"""Port of sync/repository — capture-up commit + rebase onto origin/main + force-push."""
 import os
 from datetime import datetime
 from engine.descriptor import Meta, Arg
 
-METADATA = Meta(summary="Capture-up: commit node changes, rebase onto origin/trunk, force-push sync/<node>.",
+METADATA = Meta(summary="Capture-up: commit node changes, rebase onto origin/main, force-push sync/<node>.",
                 args=[Arg("telegram_bot_url", "Telegram Bot URL for notifications")])
 TITLE = "Annual Remote Sync"
 
@@ -41,8 +41,8 @@ def run(ctx, args):
             git("commit", "-m", f"[{node}] Auto-commit: {ts}")
         else:
             log.info("No changes to commit.")
-        git("fetch", "origin", "trunk")
-        if git("rebase", "origin/trunk", check=False).returncode != 0:
+        git("fetch", "origin", "main")
+        if git("rebase", "origin/main", check=False).returncode != 0:
             log.error("Rebase conflict — aborting rebase; manual intervention required.")
             git("rebase", "--abort", check=False)
             ctx.notify.error(TITLE, url, "Rebase conflict. Manual intervention required.", node)

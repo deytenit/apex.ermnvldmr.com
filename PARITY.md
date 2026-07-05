@@ -12,7 +12,7 @@ action to its bash source and the behaviors that must match.
 | configure/systemd | actions/configure/systemd | render each unit -> /etc/systemd/system; daemon-reload; enable+start .service |
 | configure/routing | actions/configure/routing | ip_forward=1; fwmark 0x1->table100 rule; local default route table100 (idempotent) |
 | configure | (new umbrella) | run base,ufw,crowdsec,cron,systemd,routing in order |
-| sync/repository | actions/sync/repository | sync/<node> branch; add -A + commons submodule; commit; rebase origin/trunk; force-with-lease; telegram |
+| sync/repository | actions/sync/repository | sync/<node> branch; add -A + commons submodule; commit; rebase origin/main (was trunk in the monorepo); force-with-lease; telegram |
 | sync/packages | actions/sync/packages | apt --just-print upgrade Inst list; docker+skopeo digest compare; telegram info |
 | backup/run | actions/sync/tiers (restic-backup) | init-if-needed; backup /data/@tier1,2 --host --tag com-ermnvldmr-root-<node>; forget --prune 7/4/12; telegram |
 | tiers/link | actions/tiers/link | node + per-project @tierN symlinks; shared/ links; .env symlink |
