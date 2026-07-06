@@ -34,6 +34,12 @@ def run(ctx, args):
         full = os.path.join(comp, proj)
         if not os.path.isdir(full) or proj.startswith(".") or proj.startswith("@"):
             continue
+        # opt-out: a project marked .apex-root-owned runs as root and keeps its tier
+        # data root-owned (e.g. seafile-mc, whose entrypoint refuses non-root-owned
+        # data). Skip the noroot user + .env UID injection; tiers/chown forces root.
+        if os.path.isfile(os.path.join(full, ".apex-root-owned")):
+            log.info(f"{proj}: .apex-root-owned — runs as root; skipping noroot user")
+            continue
         base = f"noroot-{_sanitize(proj)}"
         cand, i = base, 1
         while cand in used:

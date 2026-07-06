@@ -46,6 +46,16 @@ def run(ctx, args):
         full = os.path.join(comp, proj)
         if not os.path.isdir(full) or proj.startswith(".") or proj.startswith("@"):
             continue
+        # opt-out: .apex-root-owned forces this project's tier data (dir + children,
+        # recursively) to root:root — for services that run as root and reject
+        # non-root-owned data (e.g. seafile-mc). Blocks noroot ownership entirely.
+        if os.path.isfile(os.path.join(full, ".apex-root-owned")):
+            log.info(f"Applying root ownership for {proj} (.apex-root-owned)")
+            for tp in tiers:
+                for d in (os.path.join(tp, proj), os.path.join(tp, "shared", proj)):
+                    if os.path.isdir(d):
+                        s.sudo(["chown", "-R", "root:root", d]); log.success(f"  Owned {d} (root)")
+            continue
         env_path = os.path.join(full, ".env")
         uid = _env_val(env_path, "APEX_UID")
         gid = _env_val(env_path, "APEX_GID")
