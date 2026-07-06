@@ -152,27 +152,48 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # --- optional: loki log aggregation (node-local, enclave) ---
-  loki:
-    image: grafana/loki:3.1.1
-    container_name: apex-loki
-    profiles: [loki]
-    command: ["-config.file=/etc/loki/config.yaml"]
+  # --- optional: observability agent (profile-gated) ---
+  # Grafana Alloy: one agent per node. Collects host metrics (node_exporter-
+  # equivalent) + container metrics (cadvisor) and PUSHES them via remote_write;
+  # collects systemd-journal + docker logs and PUSHES them to Loki. All targets
+  # are OUTBOUND to the central gfn stack (Prometheus + Loki live on icarus), so
+  # Alloy needs egress (direct, not enclave). Replaces the old store-only `loki`
+  # service (which had no feeder). Config is a committed, env-parameterized asset.
+  alloy:
+    image: grafana/alloy:v1.17.1
+    container_name: apex-alloy
+    profiles: [alloy]
+    user: "0:0"  # root: required for host metrics, journal, and docker.sock
     volumes:
-      - ${APEX_TIER1}/loki/config.yaml:/etc/loki/config.yaml:ro
-      - ${APEX_TIER2}/loki/data:/loki
+      - ${APEX_COMMONS}/assets/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${APEX_TIER2}/alloy/data:/var/lib/alloy
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    environment:
+      <<: *shared-environment
+      APEX_NODE: "${APEX_NODE?error}"
+      # push targets + machine auth (per-node scalars in apex.env / secret .env)
+      APEX_LOKI_PUSH_URL: "${APEX_LOKI_PUSH_URL?error}"
+      APEX_PROM_PUSH_URL: "${APEX_PROM_PUSH_URL?error}"
+      APEX_OBS_BASIC_AUTH_USER: "${APEX_OBS_BASIC_AUTH_USER?error}"
+      APEX_OBS_BASIC_AUTH_PASS: "${APEX_OBS_BASIC_AUTH_PASS?error}"
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy
+      - /etc/alloy/config.alloy
     networks:
-      enclave: {}
+      direct: {}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
-    user: "${APEX_UID?error}:${APEX_GID?error}"
-    labels:
-      # /loki/* is loki's native API prefix — no strip needed. basicauth users come
-      # from the node's uncommitted .env (only needed when the loki profile is on).
-      - "traefik.enable=true"
-      - "traefik.http.routers.apex-loki.rule=Host(`${APEX_NODE_FQDN}`) && PathPrefix(`/loki`)"
-      - "traefik.http.routers.apex-loki.middlewares=apex-loki-auth"
-      - "traefik.http.middlewares.apex-loki-auth.basicauth.users=${APEX_LOKI_BASIC_AUTH}"
-      - "traefik.http.services.apex-loki.loadbalancer.server.port=3100"
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   direct:

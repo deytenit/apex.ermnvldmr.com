@@ -1,0 +1,120 @@
+// ============================================================================
+// APEX fleet observability agent — per-node Grafana Alloy config (shared).
+// Committed, env-parameterized: every node runs this SAME file; per-node values
+// come from sys.env(...) (APEX_NODE, push URLs, obs basic-auth creds).
+// Verified against grafana.com/docs/alloy/latest (Alloy v1.17.1).
+// ============================================================================
+// Model: PUSH. Metrics -> remote_write to the central Prometheus (on icarus);
+// logs -> loki.write to the central Loki (on icarus). daedalus/morpheus reach
+// them through the public gfn.ermnvldmr.com front (authelia-bypassed + basicauth
+// on /loki and /prometheus/api/v1/write); icarus resolves gfn locally.
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// METRICS
+// ----------------------------------------------------------------------------
+
+// Host metrics (node_exporter-equivalent). Container mounts host /proc,/sys,/
+// at /host/proc,/host/sys,/rootfs so the exporter reads the HOST.
+prometheus.exporter.unix "node" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/rootfs"
+}
+
+// Container metrics (cadvisor-equivalent) via the docker socket.
+prometheus.exporter.cadvisor "containers" {
+  docker_host            = "unix:///var/run/docker.sock"
+  store_container_labels = true
+}
+
+// Stamp a static `node` label onto each exporter's targets.
+discovery.relabel "node_metrics" {
+  targets = prometheus.exporter.unix.node.targets
+  rule {
+    action       = "replace"
+    target_label = "node"
+    replacement  = sys.env("APEX_NODE")
+  }
+}
+discovery.relabel "container_metrics" {
+  targets = prometheus.exporter.cadvisor.containers.targets
+  rule {
+    action       = "replace"
+    target_label = "node"
+    replacement  = sys.env("APEX_NODE")
+  }
+}
+
+prometheus.scrape "node" {
+  targets         = discovery.relabel.node_metrics.output
+  forward_to      = [prometheus.remote_write.default.receiver]
+  scrape_interval = "15s"
+}
+prometheus.scrape "containers" {
+  targets         = discovery.relabel.container_metrics.output
+  forward_to      = [prometheus.remote_write.default.receiver]
+  scrape_interval = "15s"
+}
+
+// Push metrics to the central Prometheus (needs --web.enable-remote-write-receiver).
+prometheus.remote_write "default" {
+  endpoint {
+    url = sys.env("APEX_PROM_PUSH_URL")
+    basic_auth {
+      username = sys.env("APEX_OBS_BASIC_AUTH_USER")
+      password = sys.env("APEX_OBS_BASIC_AUTH_PASS")
+    }
+  }
+}
+
+// ----------------------------------------------------------------------------
+// LOGS
+// ----------------------------------------------------------------------------
+
+// systemd journal (host services, ufw, sshd, crowdsec, etc.).
+loki.source.journal "systemd" {
+  path    = "/var/log/journal"
+  max_age = "12h"
+  labels  = {
+    node = sys.env("APEX_NODE"),
+    job  = "systemd-journal",
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+// All docker containers' stdout/stderr.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+discovery.relabel "container_logs" {
+  targets = discovery.docker.containers.targets
+  rule {
+    action        = "replace"
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.*)"
+    target_label  = "container"
+  }
+  rule {
+    action       = "replace"
+    target_label = "node"
+    replacement  = sys.env("APEX_NODE")
+  }
+}
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.container_logs.output
+  relabel_rules = discovery.relabel.container_logs.rules
+  forward_to    = [loki.write.default.receiver]
+}
+
+// Push logs to the central Loki.
+loki.write "default" {
+  endpoint {
+    url = sys.env("APEX_LOKI_PUSH_URL")
+    basic_auth {
+      username = sys.env("APEX_OBS_BASIC_AUTH_USER")
+      password = sys.env("APEX_OBS_BASIC_AUTH_PASS")
+    }
+  }
+}
