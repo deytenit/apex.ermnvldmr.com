@@ -23,6 +23,10 @@ services:
     command: ["-c", "/etc/xray/config.jsonc"]
     restart: unless-stopped
     user: "0:0"
+    labels:
+      # backup (resticontainer, core/all-nodes): xray config only (logs + shm are ephemeral)
+      - "restic.enable=true"
+      - "restic.backup.paths=/etc/xray/config.jsonc"
     security_opt:
       - no-new-privileges:true
 
@@ -144,6 +148,10 @@ services:
       - "traefik.http.middlewares.apex-adguard-strip-prefix.stripprefix.prefixes=/adguard"
       - "traefik.http.routers.apex-adguard.service=apex-adguard"
       - "traefik.http.services.apex-adguard.loadbalancer.server.port=3000"
+      # backup (resticontainer, core/all-nodes): dynamic routing rules only
+      # (letsencrypt certs are regenerable via ACME/Cloudflare DNS-01)
+      - "restic.enable=true"
+      - "restic.backup.paths=/etc/traefik/dynamic"
     security_opt:
       - no-new-privileges:true
 
@@ -157,6 +165,10 @@ services:
       - ${APEX_TIER1}/adguard/conf:/opt/adguardhome/conf
     environment:
       <<: *shared-environment
+    labels:
+      # backup (resticontainer, core/all-nodes): adguard config only (work data regenerable)
+      - "restic.enable=true"
+      - "restic.backup.paths=/opt/adguardhome/conf"
     network_mode: "service:traefik"
     restart: unless-stopped
     cap_add:
