@@ -27,30 +27,39 @@ services:
       - no-new-privileges:true
 
   # --- backups (host network, manual profile, one-shot) ---
-  restic:
-    image: restic/restic:0.18.1
-    container_name: apex-restic
+  # resticontainer (github.com/deytenit/resticontainer): a restic wrapper that
+  # discovers per-service backup intent from `restic.*` compose labels
+  # (restic.enable / restic.backup.paths / restic.backup.stop / restic.hooks.*).
+  # On `backup` it queries the docker daemon, runs each service's pre-hook (e.g.
+  # pg_dump), stops any container flagged restic.backup.stop, resolves the labeled
+  # container mounts to host paths (via /hostfs + mount source), snapshots the union
+  # in a single restic run, then restarts + runs post-hooks. Every other subcommand
+  # (init/snapshots/forget/…) passes straight through to restic. Needs the docker
+  # socket (list/inspect/exec/stop/start) and the host root read-only (to read the
+  # data) — a privileged manual one-shot, same trust surface as the old restic core.
+  resticontainer:
+    image: ghcr.io/deytenit/resticontainer:0.19.1
+    container_name: apex-resticontainer
     profiles: [manual]
     volumes:
       - ${APEX_TIER3}/restic/cache:/var/restic-cache
-      # FIX (Task 1.11): mount the backed-up tier roots read-only so `restic backup
-      # /data/@tier1 /data/@tier2` actually snapshots data (was missing today).
-      - ${APEX_TIER_ROOT1}:/data/@tier1:ro
-      - ${APEX_TIER_ROOT2}:/data/@tier2:ro
+      - /var/run/docker.sock:/var/run/docker.sock          # query + exec/stop/start
+      - /:/hostfs:ro                                        # read the data off the host
     environment:
       <<: *shared-environment
+      RESTIC_HOSTFS: /hostfs                                # prefix for resolved mount sources
       RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY?error}"
       RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD?error}"
       AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID?error}"
       AWS_SECRET_ACCESS_KEY: "${APEX_RESTIC_AWS_SECRET_ACCESS_KEY?error}"
       AWS_REGION: "ru-central1"
       AWS_ENDPOINT_URL: "https://storage.yandexcloud.net/"
-      # per-node override (icarus historically ran "max" for manual invocations;
-      # scheduled backups always force --compression auto on the CLI)
-      RESTIC_COMPRESSION: "${APEX_RESTIC_COMPRESSION:-auto}"
+      # max compression is fleet policy (backup/run also forces --compression max on
+      # the CLI; needs repo format v2, which a fresh restic init creates). Per-node
+      # override via APEX_RESTIC_COMPRESSION only if ever needed.
+      RESTIC_COMPRESSION: "${APEX_RESTIC_COMPRESSION:-max}"
       RESTIC_CACHE_DIR: /var/restic-cache
     network_mode: "host"
-    entrypoint: ["restic"]
 
   # --- docker socket proxy ---
   socket-proxy:

@@ -14,7 +14,7 @@ action to its bash source and the behaviors that must match.
 | configure | (new umbrella) | run base,ufw,crowdsec,cron,systemd,routing in order |
 | sync/repository | actions/sync/repository | sync/<node> branch; add -A + commons submodule; commit; rebase origin/main (was trunk in the monorepo); force-with-lease; telegram |
 | sync/packages | actions/sync/packages | apt --just-print upgrade Inst list; docker+skopeo digest compare; telegram info |
-| backup/run | actions/sync/tiers (restic-backup) | init-if-needed; backup /data/@tier1,2 --host --tag com-ermnvldmr-root-<node>; forget --prune 7/4/12; telegram |
+| backup/run | actions/sync/tiers (restic-backup) | init-if-needed; label-driven backup via resticontainer (discovers `restic.*`-labelled services, runs pre-hooks/stops, snapshots the resolved host paths) --host <node>.apex.ermnvldmr.com --tag biweekly --compression max; guard on a fresh snapshot; forget --prune 7/4/12; telegram |
 | tiers/link | actions/tiers/link | node + per-project @tierN symlinks; shared/ links; .env symlink |
 | tiers/useradd | actions/tiers/useradd | noroot-<proj> system users; noroot-shared group; APEX_UID/GID block in .env |
 | tiers/chown | actions/tiers/chown | {tier}/{proj}=uid:gid; {tier}/shared/{proj}=uid:sgid+sticky; base=root:root |
@@ -26,7 +26,8 @@ action to its bash source and the behaviors that must match.
 ## Deliberate deltas (rename + fixes)
 - root->apex everywhere (CLI, container names apex-*, telegram instance com.ermnvldmr.apex.*, ufw markers APEX.*, networks direct/enclave/socket).
 - No <node> arg; identity from FQDN + node.env.
-- restic core service gains read-only /data/@tier1,2 mounts (makes existing backup command functional).
+- backup superseded by the resticontainer migration (see below): the old whole-tier-root
+  restic snapshot is replaced by per-service, `restic.*`-label-driven backups.
 - ufw markers self-heal (delete ROOT + APEX blocks before inject).
 - envsubst -> string.Template.safe_substitute; wget/curl download -> urllib. Unset template
   vars stay LITERAL (envsubst emptied them) — typos surface instead of silently blanking.
@@ -57,3 +58,18 @@ action to its bash source and the behaviors that must match.
 - restic: per-node selective tier2 mounts replaced by whole-tier-root RO mounts
   (superset; snapshot paths preserved); RESTIC_COMPRESSION per-node via
   `APEX_RESTIC_COMPRESSION` (default auto).
+
+## resticontainer migration (SP4 realized)
+- The `restic` core service is replaced by `resticontainer`
+  (`ghcr.io/deytenit/resticontainer`), a restic wrapper that reads per-service
+  `restic.*` compose labels: `restic.enable`, `restic.backup.paths` (comma-separated
+  container mount destinations — matched exactly, whole mount dir backed up),
+  `restic.backup.stop`, and `restic.hooks.pre-backup`/`post-backup` (run via docker exec).
+- It mounts the docker socket (list/inspect/exec/stop/start) and the host root
+  `/:/hostfs:ro` (`RESTIC_HOSTFS=/hostfs`); it resolves each labelled mount to
+  `/hostfs` + the mount's host source and snapshots the union in one restic run.
+- The whole-tier-root RO mounts and the explicit `/data/@tier1,2` backup args are gone;
+  a service is backed up only if it carries `restic.enable=true`. DB consistency is
+  per-service: a pre-backup hook dumps into a dedicated backed-up mount (e.g. postgres
+  `pg_dump … > /dumps/dump.sql`), never the live data dir. `backup/run` now guards on a
+  fresh snapshot landing for the host (a no-label repo would otherwise be a silent no-op).
