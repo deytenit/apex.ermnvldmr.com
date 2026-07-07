@@ -65,9 +65,10 @@ action to its bash source and the behaviors that must match.
   `restic.*` compose labels: `restic.enable`, `restic.backup.paths` (comma-separated
   container mount destinations — matched exactly, whole mount dir backed up),
   `restic.backup.stop`, and `restic.hooks.pre-backup`/`post-backup` (run via docker exec).
-- It mounts the docker socket (list/inspect/exec/stop/start) and the host root
-  `/:/hostfs:ro` (`RESTIC_HOSTFS=/hostfs`); it resolves each labelled mount to
-  `/hostfs` + the mount's host source and snapshots the union in one restic run.
+- It mounts the docker socket (list/inspect/exec/stop/start) and `/srv:/srv:ro`
+  (`RESTIC_HOSTFS=/`); apex data + checkouts live under /srv and the `@tierN` mounts
+  are absolute symlinks into /srv, so mounting /srv at the same path lets restic
+  follow them and record the real host paths, and snapshots the union in one run.
 - The whole-tier-root RO mounts and the explicit `/data/@tier1,2` backup args are gone;
   a service is backed up only if it carries `restic.enable=true`. DB consistency is
   per-service: a pre-backup hook dumps into a dedicated backed-up mount (e.g. postgres

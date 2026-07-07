@@ -32,11 +32,11 @@ services:
   # (restic.enable / restic.backup.paths / restic.backup.stop / restic.hooks.*).
   # On `backup` it queries the docker daemon, runs each service's pre-hook (e.g.
   # pg_dump), stops any container flagged restic.backup.stop, resolves the labeled
-  # container mounts to host paths (via /hostfs + mount source), snapshots the union
+  # container mounts to host paths (via the /srv mount), snapshots the union
   # in a single restic run, then restarts + runs post-hooks. Every other subcommand
   # (init/snapshots/forget/…) passes straight through to restic. Needs the docker
-  # socket (list/inspect/exec/stop/start) and the host root read-only (to read the
-  # data) — a privileged manual one-shot, same trust surface as the old restic core.
+  # socket (list/inspect/exec/stop/start) and /srv read-only (the fleet's data root)
+  # — a privileged manual one-shot, same trust surface as the old restic core.
   resticontainer:
     image: ghcr.io/deytenit/resticontainer:0.19.1
     container_name: apex-resticontainer
@@ -44,10 +44,15 @@ services:
     volumes:
       - ${APEX_TIER3}/restic/cache:/var/restic-cache
       - /var/run/docker.sock:/var/run/docker.sock          # query + exec/stop/start
-      - /:/hostfs:ro                                        # read the data off the host
+      # apex tier data + checkouts live under /srv, and the @tierN bind mounts are
+      # ABSOLUTE symlinks into /srv (compositions/<p>/@tierN -> /srv/com-…-tierN/<p>).
+      # Mount /srv at the same path with RESTIC_HOSTFS=/ so restic follows those
+      # symlinks and records the real host paths — a bare /:/hostfs cannot, because
+      # the absolute symlink target /srv/… is dangling inside the container.
+      - /srv:/srv:ro                                        # read the data (resolves @tierN symlinks)
     environment:
       <<: *shared-environment
-      RESTIC_HOSTFS: /hostfs                                # prefix for resolved mount sources
+      RESTIC_HOSTFS: "/"                                    # mount sources are already absolute (/srv/…)
       RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY?error}"
       RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD?error}"
       AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID?error}"
