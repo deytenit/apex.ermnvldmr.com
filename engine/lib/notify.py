@@ -1,9 +1,8 @@
 # engine/lib/notify.py
-"""ctx.notify — Telegram notifications (port of root_core_telegram*).
+"""ctx.notify — Telegram notifications.
 
-instance renamed com.ermnvldmr.root.<node> -> com.ermnvldmr.apex.<node>. POSTs
-application/x-www-form-urlencoded via urllib (stdlib) — functionally identical to
-the bash curl multipart for Telegram sendMessage.
+The alert `instance` is the node's public host (APEX_NODE_HOST), passed in from the
+context. POSTs application/x-www-form-urlencoded via urllib (stdlib).
 """
 from __future__ import annotations
 import html
@@ -20,7 +19,7 @@ def build_text(title: str, message: str, node: str, level: str, ts: str) -> str:
         severity = "critical"
     elif level == "WARN":
         severity = "warning"
-    instance = f"com.ermnvldmr.apex.{node}"
+    instance = node
     msg = message if len(message) <= 200 else message[:200] + "..."
     msg = html.escape(msg)
     safe_title = html.escape(title)

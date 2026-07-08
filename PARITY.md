@@ -14,7 +14,7 @@ action to its bash source and the behaviors that must match.
 | configure | (new umbrella) | run base,ufw,crowdsec,cron,systemd,routing in order |
 | sync/repository | actions/sync/repository | sync/<node> branch; add -A + commons submodule; commit; rebase origin/main (was trunk in the monorepo); force-with-lease; telegram |
 | sync/packages | actions/sync/packages | apt --just-print upgrade Inst list; docker+skopeo digest compare; telegram info |
-| backup/run | actions/sync/tiers (restic-backup) | init-if-needed; label-driven backup via resticontainer (discovers `restic.*`-labelled services, runs pre-hooks/stops, snapshots the resolved host paths) --host <node>.apex.ermnvldmr.com --tag biweekly --compression max; guard on a fresh snapshot; forget --prune 7/4/12; telegram |
+| backup/run | actions/sync/tiers (restic-backup) | init-if-needed; label-driven backup via resticontainer (discovers `restic.*`-labelled services, runs pre-hooks/stops, snapshots the resolved host paths) --host $APEX_NODE_HOST --tag biweekly --compression max; guard on a fresh snapshot; forget --prune 7/4/12; telegram |
 | tiers/link | actions/tiers/link | node + per-project @tierN symlinks; shared/ links; .env symlink |
 | tiers/useradd | actions/tiers/useradd | noroot-<proj> system users; noroot-shared group; APEX_UID/GID block in .env |
 | tiers/chown | actions/tiers/chown | {tier}/{proj}=uid:gid; {tier}/shared/{proj}=uid:sgid+sticky; base=root:root |
@@ -24,7 +24,7 @@ action to its bash source and the behaviors that must match.
 | compose | actions/compose | apex core first then services alpha; reverse on down; --dry-run; extra passthrough |
 
 ## Deliberate deltas (rename + fixes)
-- root->apex everywhere (CLI, container names apex-*, telegram instance com.ermnvldmr.apex.*, ufw markers APEX.*, networks direct/enclave/socket).
+- root->apex everywhere (CLI, container names apex-*, telegram instance = APEX_NODE_HOST, ufw markers APEX.*, networks direct/enclave/socket).
 - No <node> arg; identity from FQDN + node.env.
 - backup superseded by the resticontainer migration (see below): the old whole-tier-root
   restic snapshot is replaced by per-service, `restic.*`-label-driven backups.

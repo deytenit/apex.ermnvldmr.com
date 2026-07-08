@@ -29,7 +29,7 @@ def run(ctx, args):
         ctx.sys.sudo(["find", abs_dest, "-type", "f", "-name", "*.pem", "-exec", "chmod", "600", "{}", "+"])
         ctx.sys.sudo(["chown", "-R", f"{os.getuid()}:{os.getgid()}", abs_dest])
         log.success("Certificates extracted.")
-        ctx.notify.success(TITLE, url, f"Certificates extracted for {node}", node)
+        ctx.notify.success(TITLE, url, f"Certificates extracted for {node}")
     except Exception as e:
-        log.error(str(e)); ctx.notify.error(TITLE, url, f"cert extraction failed: {e}", node)
+        log.error(str(e)); ctx.notify.error(TITLE, url, f"cert extraction failed: {e}")
         raise SystemExit(1)

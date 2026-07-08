@@ -3,6 +3,7 @@
 import os
 from datetime import datetime
 from engine.descriptor import Meta, Arg
+from engine.identity import read_env
 
 METADATA = Meta(summary="Capture-up: commit node changes, rebase onto origin/main, force-push sync/<node>.",
                 args=[Arg("telegram_bot_url", "Telegram Bot URL for notifications")])
@@ -11,9 +12,12 @@ TITLE = "Annual Remote Sync"
 def run(ctx, args):
     log, node, url = ctx.log, ctx.node.name, args.telegram_bot_url
     repo, commons = ctx.paths.repo_root, ctx.paths.commons
+    ne = read_env(os.path.join(repo, "node.env"))       # per-node bot identity (generic defaults)
+    author = ne.get("APEX_GIT_AUTHOR_NAME", "apex [bot]")
+    email = ne.get("APEX_GIT_AUTHOR_EMAIL", "apex@localhost")
     env = dict(os.environ,
-               GIT_AUTHOR_NAME="Adam Jensen [bot]", GIT_AUTHOR_EMAIL="adam@ermnvldmr.com",
-               GIT_COMMITTER_NAME="Adam Jensen [bot]", GIT_COMMITTER_EMAIL="adam@ermnvldmr.com")
+               GIT_AUTHOR_NAME=author, GIT_AUTHOR_EMAIL=email,
+               GIT_COMMITTER_NAME=author, GIT_COMMITTER_EMAIL=email)
 
     def git(*a, check=True):
         return ctx.sys.run(["git", "-C", repo, *a], check=check, env=env)
@@ -45,16 +49,16 @@ def run(ctx, args):
         if git("rebase", "origin/main", check=False).returncode != 0:
             log.error("Rebase conflict — aborting rebase; manual intervention required.")
             git("rebase", "--abort", check=False)
-            ctx.notify.error(TITLE, url, "Rebase conflict. Manual intervention required.", node)
+            ctx.notify.error(TITLE, url, "Rebase conflict. Manual intervention required.")
             raise SystemExit(1)
         git("submodule", "update", "--init", "--recursive")
         git("push", "--force-with-lease", "origin", branch)
         log.success(f"Pushed {branch}.")
-        if not ctx.notify.success(TITLE, url, f"Sync to '{branch}' completed.", node):
+        if not ctx.notify.success(TITLE, url, f"Sync to '{branch}' completed."):
             raise SystemExit(1)
     except SystemExit:
         raise
     except Exception as e:
         log.error(f"{type(e).__name__}: {e}")
-        ctx.notify.error(TITLE, url, f"Sync failed: {e}", node)
+        ctx.notify.error(TITLE, url, f"Sync failed: {e}")
         raise SystemExit(1)

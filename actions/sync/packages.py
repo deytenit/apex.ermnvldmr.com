@@ -15,13 +15,13 @@ def run(ctx, args):
         raise
     except Exception as e:   # bash ERR trap parity: unhandled failures page via Telegram
         log.error(f"{type(e).__name__}: {e}")
-        ctx.notify.error(TITLE, url, f"Critical error: {e}", node)
+        ctx.notify.error(TITLE, url, f"Critical error: {e}")
         raise SystemExit(1)
 
 def _check(ctx, args, log, node, url, s):
     if not os.path.isfile("/etc/debian_version"):
         log.error("Requires a Debian-based system.")
-        ctx.notify.error(TITLE, url, "Requires a Debian-based system.", node)
+        ctx.notify.error(TITLE, url, "Requires a Debian-based system.")
         raise SystemExit(1)
 
     log.info("Updating package lists...")
@@ -66,6 +66,6 @@ def _check(ctx, args, log, node, url, s):
         images = (f"*Images ({len(outdated)}):* " + ", ".join(f"`{i}`" for i in outdated)) if outdated else "*Images:* _none_"
 
     # A failed send exits 1 (bash: telegram_info's return 1 tripped set -e).
-    if not ctx.notify.info(TITLE, url, f"*APT:*\n{packages}\n\n*Skopeo:*\n{images}", node):
+    if not ctx.notify.info(TITLE, url, f"*APT:*\n{packages}\n\n*Skopeo:*\n{images}"):
         raise SystemExit(1)
     log.success("Security update check completed.")

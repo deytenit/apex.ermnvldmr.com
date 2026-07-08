@@ -202,7 +202,7 @@ services:
       - /etc/machine-id:/etc/machine-id:ro
     environment:
       <<: *shared-environment
-      APEX_NODE: "${APEX_NODE?error}"
+      APEX_NODE_HOST: "${APEX_NODE_HOST?error}"        # node + instance metric/log labels
       # push targets + machine auth (per-node scalars in apex.env / secret .env)
       APEX_LOKI_PUSH_URL: "${APEX_LOKI_PUSH_URL?error}"
       APEX_PROM_PUSH_URL: "${APEX_PROM_PUSH_URL?error}"

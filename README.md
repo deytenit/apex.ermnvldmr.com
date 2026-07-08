@@ -1,9 +1,9 @@
-# apex.ermnvldmr.com
+# apex
 
-The **commons** of the apex fleet: a stock-python engine (`apex <group>/<action>`) and
+The **commons** of an apex fleet: a stock-python engine (`apex <group>/<action>`) and
 the shared core docker-compose, consumed by every node as the `commons/` git submodule.
-
-Full documentation: [docs.ermnvldmr.com/en/apex](https://docs.ermnvldmr.com/en/apex/).
+The framework assumes no particular domain — every node declares its own identity in
+`node.env`.
 
 ## Layout
 - `apex` — launcher (python3, stdlib only); node `init.sh` symlinks it onto `PATH`.
@@ -17,8 +17,8 @@ Node-specific tooling lives in each node repo's `proprietaries/` — commons hol
 what every node shares.
 
 ## Usage (on a node)
-`apex` acts on the **local checkout** — no `<node>` argument. Identity comes from the
-host FQDN (`<node>.a<x>.apex.ermnvldmr.com`) and `node.env`.
+`apex` acts on the **local checkout** — no `<node>` argument. Identity comes from
+`node.env` (`APEX_NODE_HOST`, `APEX_NODE_FQDN`, `APEX_SUBNET`).
 - `apex` / `apex --help` — list actions
 - `apex configure/ufw` — render + apply this node's ufw config
 - `apex configure` — run every `configure/*` in order

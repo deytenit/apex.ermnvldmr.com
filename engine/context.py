@@ -81,7 +81,7 @@ class Context:
         self.ufw = Ufw(self.log, self.sys, self.host)
         self.crowdsec = Crowdsec(self.log, self.sys, self.tpl, self.host)
         self.systemd = Systemd(self.log, self.sys, self.tpl, self.host)
-        self.notify = Notify(self.log, name)
+        self.notify = Notify(self.log, node.host if node else "global")
         self._shadowed = shadowed
         self._commons = None
 
@@ -98,10 +98,9 @@ class Context:
         v["APEX_REPO_ROOT"] = self.paths.repo_root
         if self.node:
             v.update({
-                "APEX_NODE": self.node.name,
-                "APEX_CLUSTER": self.node.cluster,
-                "APEX_SUBNET": self.node.subnet,
+                "APEX_NODE_HOST": self.node.host,
                 "APEX_NODE_FQDN": self.node.fqdn,
+                "APEX_SUBNET": self.node.subnet,
                 "APEX_TIER1": self.paths.tier1, "APEX_TIER2": self.paths.tier2,
                 "APEX_TIER3": self.paths.tier3,
                 "APEX_TIER1_SHARED": self.paths.stier1,

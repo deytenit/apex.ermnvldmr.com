@@ -3,10 +3,10 @@ import unittest
 from engine.lib.notify import build_text
 
 class TestNotify(unittest.TestCase):
-    def test_instance_uses_apex_prefix(self):
-        t = build_text("Title", "msg", "daedalus", "INFO", "2026-07-04 00:00:00 MSK")
-        self.assertIn("com.ermnvldmr.apex.daedalus", t)
-        self.assertIn("#instance_com_ermnvldmr_apex_daedalus", t)
+    def test_instance_is_the_host(self):
+        t = build_text("Title", "msg", "icarus.example.com", "INFO", "2026-07-04 00:00:00 MSK")
+        self.assertIn("icarus.example.com", t)
+        self.assertIn("#instance_icarus_example_com", t)   # dots -> underscores in the hashtag
 
     def test_html_escaped_and_truncated(self):
         t = build_text("A & B", "<script>" + "x" * 300, "d", "ERROR", "T")

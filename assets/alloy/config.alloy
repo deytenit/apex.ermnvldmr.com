@@ -1,13 +1,12 @@
 // ============================================================================
 // APEX fleet observability agent — per-node Grafana Alloy config (shared).
 // Committed, env-parameterized: every node runs this SAME file; per-node values
-// come from sys.env(...) (APEX_NODE, push URLs, obs basic-auth creds).
+// come from sys.env(...) (APEX_NODE_HOST, push URLs, obs basic-auth creds).
 // Verified against grafana.com/docs/alloy/latest (Alloy v1.17.1).
 // ============================================================================
-// Model: PUSH. Metrics -> remote_write to the central Prometheus (on icarus);
-// logs -> loki.write to the central Loki (on icarus). daedalus/morpheus reach
-// them through the public gfn.ermnvldmr.com front (authelia-bypassed + basicauth
-// on /loki and /prometheus/api/v1/write); icarus resolves gfn locally.
+// Model: PUSH. Metrics -> remote_write to a central Prometheus; logs -> loki.write
+// to a central Loki. Push endpoints + basic-auth are per-node env
+// (APEX_PROM_PUSH_URL, APEX_LOKI_PUSH_URL, APEX_OBS_BASIC_AUTH_USER/PASS).
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -34,7 +33,14 @@ discovery.relabel "node_metrics" {
   rule {
     action       = "replace"
     target_label = "node"
-    replacement  = sys.env("APEX_NODE")
+    replacement  = sys.env("APEX_NODE_HOST")
+  }
+  // Stamp a stable `instance` (the node's public host) instead of the default,
+  // which is the Alloy container id/address.
+  rule {
+    action       = "replace"
+    target_label = "instance"
+    replacement  = sys.env("APEX_NODE_HOST")
   }
 }
 discovery.relabel "container_metrics" {
@@ -42,7 +48,12 @@ discovery.relabel "container_metrics" {
   rule {
     action       = "replace"
     target_label = "node"
-    replacement  = sys.env("APEX_NODE")
+    replacement  = sys.env("APEX_NODE_HOST")
+  }
+  rule {
+    action       = "replace"
+    target_label = "instance"
+    replacement  = sys.env("APEX_NODE_HOST")
   }
 }
 
@@ -77,7 +88,7 @@ loki.source.journal "systemd" {
   path    = "/var/log/journal"
   max_age = "12h"
   labels  = {
-    node = sys.env("APEX_NODE"),
+    node = sys.env("APEX_NODE_HOST"),
     job  = "systemd-journal",
   }
   forward_to = [loki.write.default.receiver]
@@ -98,7 +109,7 @@ discovery.relabel "container_logs" {
   rule {
     action       = "replace"
     target_label = "node"
-    replacement  = sys.env("APEX_NODE")
+    replacement  = sys.env("APEX_NODE_HOST")
   }
 }
 loki.source.docker "containers" {
