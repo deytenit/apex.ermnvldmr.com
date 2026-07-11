@@ -28,4 +28,11 @@ what every node shares.
 git + python3 stdlib only. No pip/Node/Go/CUE. Composes are hand-authored (no codegen).
 
 ## License
-MIT (see `LICENSE`).
+BSD 2-Clause (see `LICENSE`).
+
+---
+
+Portions of this project's source code may have been developed with the assistance of AI
+code-generation tools. Contributions made with the help of such tools are welcome, provided
+the code quality stays within an acceptable range and the contributor fully understands the
+submission they are making.
