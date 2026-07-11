@@ -192,6 +192,7 @@ services:
     image: grafana/alloy:v1.17.1
     container_name: apex-alloy
     hostname: "${APEX_NODE_HOST}"   # UTS hostname => node_exporter's node_uname_info `nodename` (else the container id)
+    cgroup: host                    # host cgroup namespace: the cadvisor exporter needs it to read per-container cgroups (else machine-root only)
     profiles: [alloy]
     user: "0:0"  # root: required for host metrics, journal, and docker.sock
     volumes:
