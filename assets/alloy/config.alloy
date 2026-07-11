@@ -68,6 +68,21 @@ prometheus.scrape "containers" {
   scrape_interval = "15s"
 }
 
+// CrowdSec agent metrics. CrowdSec runs on the host (not a container) and exposes Prometheus
+// metrics on :6060; nodes that run it bind that endpoint on 0.0.0.0 (the host firewall keeps it
+// off the public interface) so Alloy can reach it via the docker gateway. Nodes that don't run
+// CrowdSec simply report this target down.
+prometheus.scrape "crowdsec" {
+  targets = [{
+    __address__ = "host.docker.internal:6060",
+    instance    = sys.env("APEX_NODE_HOST"),
+    node        = sys.env("APEX_NODE_HOST"),
+    job         = "crowdsec",
+  }]
+  forward_to      = [prometheus.remote_write.default.receiver]
+  scrape_interval = "30s"
+}
+
 // Push metrics to the central Prometheus (needs --web.enable-remote-write-receiver).
 prometheus.remote_write "default" {
   endpoint {
