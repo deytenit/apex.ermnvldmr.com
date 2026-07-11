@@ -4,9 +4,9 @@ from engine.lib.notify import build_text
 
 class TestNotify(unittest.TestCase):
     def test_instance_is_the_host(self):
-        t = build_text("Title", "msg", "icarus.example.com", "INFO", "2026-07-04 00:00:00 MSK")
-        self.assertIn("icarus.example.com", t)
-        self.assertIn("#instance_icarus_example_com", t)   # dots -> underscores in the hashtag
+        t = build_text("Title", "msg", "node1.example.com", "INFO", "2026-07-04 00:00:00 UTC")
+        self.assertIn("node1.example.com", t)
+        self.assertIn("#instance_node1_example_com", t)   # dots -> underscores in the hashtag
 
     def test_html_escaped_and_truncated(self):
         t = build_text("A & B", "<script>" + "x" * 300, "d", "ERROR", "T")

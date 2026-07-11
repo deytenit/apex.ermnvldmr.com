@@ -20,7 +20,7 @@ from typing import Dict, List, Tuple
 
 @dataclass
 class Node:
-    name: str    # short label (first segment of the host), e.g. "icarus" — logs, branch, messages
+    name: str    # short label (first segment of the host), e.g. "node1" — logs, branch, messages
     subnet: str  # the node's direct-network /24
     fqdn: str    # real FQDN — traefik Host() routing
     host: str    # public host name — backup --host, obs `instance`, notify instance

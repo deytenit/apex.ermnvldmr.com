@@ -10,12 +10,12 @@ class TestIdentity(unittest.TestCase):
         return d
 
     def test_explicit_host_and_fqdn(self):
-        repo = self._envfile("APEX_NODE_FQDN=icarus.a1.example.com\n"
-                             "APEX_NODE_HOST=icarus.example.com\n"
-                             "APEX_SUBNET=198.18.17.0/24\n")
+        repo = self._envfile("APEX_NODE_FQDN=node1.dc1.example.com\n"
+                             "APEX_NODE_HOST=node1.example.com\n"
+                             "APEX_SUBNET=10.0.0.0/24\n")
         n, warns = resolve("build-laptop", repo)   # hostname ignored when node.env has FQDN
         self.assertEqual((n.name, n.host, n.fqdn, n.subnet),
-                         ("icarus", "icarus.example.com", "icarus.a1.example.com", "198.18.17.0/24"))
+                         ("node1", "node1.example.com", "node1.dc1.example.com", "10.0.0.0/24"))
         self.assertEqual(warns, [])
 
     def test_host_defaults_to_fqdn(self):

@@ -4,7 +4,7 @@
 # resolve against THIS dir — always use absolute ${APEX_*} vars). The engine exports
 # APEX_TIER*/APEX_TIER*_SHARED/APEX_TIER_ROOT*/APEX_SUBNET/APEX_NODE_FQDN at invoke.
 x-environment: &shared-environment
-  TZ: "Europe/Moscow"
+  TZ: "${TZ:-Etc/UTC}"                        # override per node via TZ in the env; default UTC
 
 services:
   # --- edge (host network; profile-gated — a node opts in via COMPOSE_PROFILES) ---
@@ -61,8 +61,11 @@ services:
       RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD?error}"
       AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID?error}"
       AWS_SECRET_ACCESS_KEY: "${APEX_RESTIC_AWS_SECRET_ACCESS_KEY?error}"
-      AWS_REGION: "ru-central1"
-      AWS_ENDPOINT_URL: "https://storage.yandexcloud.net/"
+      # S3 backend region + endpoint. Defaults suit AWS S3 (us-east-1, no custom
+      # endpoint); set APEX_RESTIC_AWS_REGION / APEX_RESTIC_AWS_ENDPOINT (node apex.env)
+      # for any other S3-compatible store (Yandex, Backblaze B2, MinIO, …).
+      AWS_REGION: "${APEX_RESTIC_AWS_REGION:-us-east-1}"
+      AWS_ENDPOINT_URL: "${APEX_RESTIC_AWS_ENDPOINT:-}"
       # max compression is fleet policy (backup/run also forces --compression max on
       # the CLI; needs repo format v2, which a fresh restic init creates). Per-node
       # override via APEX_RESTIC_COMPRESSION only if ever needed.
@@ -139,7 +142,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.apex-traefik.rule=Host(`${APEX_NODE_FQDN}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
-      - "traefik.http.middlewares.xray-enclave.ipallowlist.sourcerange=198.18.0.0/16"
+      - "traefik.http.middlewares.xray-enclave.ipallowlist.sourcerange=${APEX_ENCLAVE_SUBNET:-198.18.0.0/16}"
       - "traefik.http.routers.apex-traefik.middlewares=xray-enclave@docker"
       - "traefik.http.routers.apex-traefik.service=api@internal"
       # adguard route (backend only present when the adguard profile is active)
@@ -182,7 +185,7 @@ services:
   # Grafana Alloy: one agent per node. Collects host metrics (node_exporter-
   # equivalent) + container metrics (cadvisor) and PUSHES them via remote_write;
   # collects systemd-journal + docker logs and PUSHES them to Loki. All targets
-  # are OUTBOUND to the central gfn stack (Prometheus + Loki live on icarus), so
+  # are OUTBOUND to a central Prometheus + Loki (hosted on whichever node runs them), so
   # Alloy needs egress (direct, not enclave). Replaces the old store-only `loki`
   # service (which had no feeder). Config is a committed, env-parameterized asset.
   alloy:

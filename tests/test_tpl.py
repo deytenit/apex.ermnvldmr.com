@@ -15,8 +15,8 @@ class TestTpl(unittest.TestCase):
 
     def test_render_substitutes_known_vars(self):
         self._w("cron/crontab", "root=${APEX_TIER1} node=$APEX_NODE\n")
-        out = self.tpl.render("cron/crontab", {"APEX_TIER1": "/mnt/t1", "APEX_NODE": "daedalus"})
-        self.assertEqual(out, "root=/mnt/t1 node=daedalus\n")
+        out = self.tpl.render("cron/crontab", {"APEX_TIER1": "/mnt/t1", "APEX_NODE": "node1"})
+        self.assertEqual(out, "root=/mnt/t1 node=node1\n")
 
     def test_render_leaves_shell_command_substitution(self):
         self._w("c", "x $(cat /f) ${APEX_NODE}\n")
