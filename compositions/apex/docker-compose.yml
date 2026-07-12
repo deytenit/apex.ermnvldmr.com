@@ -199,6 +199,7 @@ services:
       - ${APEX_COMMONS}/assets/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - ${APEX_TIER2}/alloy/data:/var/lib/alloy
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro   # cadvisor per-container stats on nodes using the containerd snapshotter (overlayfs)
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
