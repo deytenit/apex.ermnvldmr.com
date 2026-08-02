@@ -10,6 +10,19 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
+NOTIFY_TIMEOUT = 20
+
+
+def resolve_bot_url(value: str) -> str:
+    """Resolve a literal URL or an @file reference without putting secrets in argv."""
+    if not value or not value.startswith("@"):
+        return value
+    path = value[1:]
+    if not path:
+        raise ValueError("empty Telegram Bot URL file reference")
+    with open(path) as f:
+        return f.read().strip()
+
 
 def build_text(title: str, message: str, node: str, level: str, ts: str) -> str:
     status, icon, severity = "firing", "🚨", "info"
@@ -39,6 +52,11 @@ class Notify:
 
     def telegram(self, title, bot_url, message, node=None, level="INFO") -> bool:
         node = node or self.node
+        try:
+            bot_url = resolve_bot_url(bot_url)
+        except (OSError, ValueError) as e:
+            self.log.error(f"Failed to read Telegram Bot URL: {e}")
+            return False
         if not bot_url:
             self.log.warn("Telegram Bot URL not provided. Skipping notification.")
             return False
@@ -47,7 +65,8 @@ class Notify:
         data = urllib.parse.urlencode({"parse_mode": "HTML", "text": text}).encode()
         self.log.info(f"Sending Telegram notification ({level}): {title}")
         try:
-            with urllib.request.urlopen(urllib.request.Request(bot_url, data=data), timeout=120) as r:
+            with urllib.request.urlopen(urllib.request.Request(bot_url, data=data),
+                                        timeout=NOTIFY_TIMEOUT) as r:
                 r.read()
             return True
         except Exception as e:

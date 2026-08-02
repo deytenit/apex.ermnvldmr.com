@@ -1,6 +1,8 @@
 # tests/test_notify.py
+import os
+import tempfile
 import unittest
-from engine.lib.notify import build_text
+from engine.lib.notify import build_text, resolve_bot_url
 
 class TestNotify(unittest.TestCase):
     def test_instance_is_the_host(self):
@@ -19,6 +21,20 @@ class TestNotify(unittest.TestCase):
         t = build_text("T", "m", "d", "SUCCESS", "T")
         self.assertIn("Resolved", t)
         self.assertIn("✅", t)
+
+    def test_literal_bot_url_is_unchanged(self):
+        self.assertEqual(resolve_bot_url("https://example.test/bot"),
+                         "https://example.test/bot")
+
+    def test_bot_url_file_reference(self):
+        fd, path = tempfile.mkstemp()
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write("https://example.test/secret\n")
+            self.assertEqual(resolve_bot_url("@" + path),
+                             "https://example.test/secret")
+        finally:
+            os.unlink(path)
 
 if __name__ == "__main__":
     unittest.main()
