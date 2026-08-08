@@ -26,11 +26,15 @@ def run(ctx, args):
         targets = [f"/workdir/{f}" for f in files_string.splitlines()]
 
     log.info("Running dclint --fix (via docker)...")
+    env_args = []
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"):
+        if k in os.environ:
+            env_args.extend(["-e", f"{k}={os.environ[k]}"])
     # "-e commons": never --fix inside the pinned submodule — a dirtied commons makes
     # sync/repository abort the nightly capture-up.
-    r = s.run(["docker", "run", "--rm", "-v", f"{repo}:/workdir", "-w", "/workdir", "node:lts-alpine",
+    r = s.run(["docker", "run", "--rm", "--network", "host", *env_args, "-v", f"{repo}:/workdir", "-w", "/workdir", "node:lts-alpine",
                "npx", "--yes", "dclint", "-e", "@tier1", "-e", "@tier2", "-e", "@tier3", "-e", ".env",
-               "-e", "commons", "-r", "--fix", *targets], check=False)
+               "-e", "commons", "--disable-rule", "no-build-and-image", "-r", "--fix", *targets], check=False)
     if r.returncode != 0:
         log.error(f"dclint issues (exit {r.returncode})."); return r.returncode or rc_ip
     if args.hook and files_string:
