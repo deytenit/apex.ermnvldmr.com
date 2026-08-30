@@ -19,13 +19,17 @@ def run(ctx, args):
         log.info("Installing UFW..."); s.sudo(["apt-get", "install", "-y", "ufw"])
     else:
         log.info("UFW already installed.")
-    binp = os.path.expanduser("~/.local/bin/ufw-docker")
+    from engine.lib.ufw import resolve_ufw_docker_bin
+    binp = resolve_ufw_docker_bin()
     if not (os.path.isfile(binp) and os.access(binp, os.X_OK)):
         log.info("Downloading ufw-docker helper...")
-        os.makedirs(os.path.dirname(binp), exist_ok=True)
-        urllib.request.urlretrieve(UFW_DOCKER_URL, binp)       # stdlib; replaces wget/curl
-        os.chmod(binp, os.stat(binp).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        log.success(f"ufw-docker downloaded to {binp}.")
+        target_bin = os.path.expanduser("~/.local/bin/ufw-docker")
+        os.makedirs(os.path.dirname(target_bin), exist_ok=True)
+        urllib.request.urlretrieve(UFW_DOCKER_URL, target_bin)
+        os.chmod(target_bin, os.stat(target_bin).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        log.success(f"ufw-docker downloaded to {target_bin}.")
     else:
         log.info(f"ufw-docker already exists at {binp}.")
+    log.info("Ensuring ufw-docker routing rules are installed in UFW...")
+    s.sudo([binp, "install"])
     log.success("Base system initialization completed.")

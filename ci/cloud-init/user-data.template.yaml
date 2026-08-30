@@ -1,0 +1,51 @@
+#cloud-config
+# ==============================================================================
+# Cloud-Init User-Data Template for apex.ermnvldmr.com Node
+# Compatible with generic cloud-init and virtualized environments (QEMU/KVM)
+#
+# Usage:
+#   1. Copy template: cp ci/cloud-init/user-data.template.yaml user-data.yaml
+#   2. Replace the public SSH key for adam.
+#   3. Replace the private SSH deploy key for GitHub access.
+#   4. Adjust APEX_REPO_NAME, APEX_REPO_URL, and tier devices in /etc/apex/bootstrap.env.
+#   5. Pass user-data.yaml as user-data during VM creation.
+# ==============================================================================
+
+preserve_hostname: false
+hostname: daedalus.a1.apex.ermnvldmr.com
+
+users:
+  - name: adam
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [sudo, docker]
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI_REPLACE_WITH_YOUR_PUBLIC_SSH_KEY adam@workstation"
+
+write_files:
+  # ----------------------------------------------------------------------------
+  # 1. SSH Deploy Key for GitHub Submodule & Repo Access
+  # ----------------------------------------------------------------------------
+  - path: /home/adam/.ssh/id_ed25519
+    owner: adam:adam
+    permissions: '0600'
+    content: |
+      -----BEGIN OPENSSH PRIVATE KEY-----
+      # REPLACE WITH YOUR ED25519 DEPLOY PRIVATE KEY
+      -----END OPENSSH PRIVATE KEY-----
+
+  # ----------------------------------------------------------------------------
+  # 2. Node Bootstrap Parameters
+  # ----------------------------------------------------------------------------
+  - path: /etc/apex/bootstrap.env
+    owner: root:root
+    permissions: '0600'
+    content: |
+      APEX_REPO_NAME="daedalus.apex.ermnvldmr.com"
+      APEX_REPO_URL="git@github.com:deytenit/daedalus.apex.ermnvldmr.com.git"
+      APEX_TIER1_DEVICE="/dev/vdb"
+      APEX_TIER2_DEVICE="/dev/vdc"
+      APEX_TIER3_DEVICE=""
+
+runcmd:
+  - /usr/local/bin/apex-bootstrap

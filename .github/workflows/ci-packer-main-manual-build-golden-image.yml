@@ -1,0 +1,112 @@
+name: ci/packer - main/manual-build-golden-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_s3:
+        description: "Upload built image to specified static S3 Object Storage"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-golden-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-scripts:
+    name: "Validate: Provisioner Scripts"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Shell Script Syntax
+        run: bash -n ci/packer/scripts/*.sh
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: "latest"
+
+      - name: Validate Packer Template
+        run: |
+          packer init ci/packer/apex-debian-13.pkr.hcl
+          packer validate ci/packer/apex-debian-13.pkr.hcl
+
+  build-image:
+    name: "Build: Golden Image"
+    needs: validate-scripts
+    runs-on: ubuntu-24.04
+    outputs:
+      image_name: ${{ steps.vars.outputs.image_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compute Image Metadata
+        id: vars
+        run: |
+          SHORT_SHA="$(echo ${{ github.sha }} | cut -c1-7)"
+          IMAGE_NAME="com-ermnvldmr-apex-debian-13-amd64-${SHORT_SHA}.qcow2"
+          echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Install QEMU & Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils xorriso
+          sudo chmod 666 /dev/kvm 2>/dev/null || true
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: "latest"
+
+      - name: Build Debian 13 Image with Packer
+        run: |
+          packer init ci/packer/apex-debian-13.pkr.hcl
+          packer build -var "vm_name=${{ steps.vars.outputs.image_name }}" ci/packer/apex-debian-13.pkr.hcl
+
+      - name: Upload Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-image
+          path: output-qemu/${{ steps.vars.outputs.image_name }}
+          retention-days: 2
+
+  upload-s3:
+    name: "Upload: S3 Storage"
+    needs: build-image
+    if: inputs.upload_s3 == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: golden-image
+          path: output-qemu
+
+      - name: Upload to Static S3 (/dev/images/)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.STATIC_AWS_ACCESS_KEY_ID || secrets.COM_ERMNVLDMR_STATIC_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.STATIC_AWS_SECRET_ACCESS_KEY || secrets.COM_ERMNVLDMR_STATIC_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.STATIC_AWS_REGION || secrets.COM_ERMNVLDMR_STATIC_S3_REGION || 'us-east-1' }}
+          S3_ENDPOINT: ${{ secrets.STATIC_S3_ENDPOINT_URL || secrets.COM_ERMNVLDMR_STATIC_S3_ENDPOINT_URL }}
+          S3_BUCKET: ${{ secrets.STATIC_S3_BUCKET || secrets.COM_ERMNVLDMR_STATIC_S3_BUCKET }}
+          IMAGE_NAME: ${{ needs.build-image.outputs.image_name }}
+        run: |
+          if [ -n "${S3_BUCKET}" ] && [ -n "${AWS_ACCESS_KEY_ID}" ]; then
+            ENDPOINT_FLAG=""
+            if [ -n "${S3_ENDPOINT}" ]; then
+              ENDPOINT_FLAG="--endpoint-url=${S3_ENDPOINT}"
+            fi
+            echo "Cleaning up older builds in dev/images/com-ermnvldmr-apex-debian-13-amd64-*.qcow2 to maintain quota..."
+            aws ${ENDPOINT_FLAG} s3 rm "s3://${S3_BUCKET}/dev/images/" --recursive --exclude "*" --include "com-ermnvldmr-apex-debian-13-amd64-*.qcow2" || true
+            echo "Uploading ${IMAGE_NAME}..."
+            aws ${ENDPOINT_FLAG} s3 cp "output-qemu/${IMAGE_NAME}" "s3://${S3_BUCKET}/dev/images/${IMAGE_NAME}"
+            echo "Golden image uploaded successfully to s3://${S3_BUCKET}/dev/images/${IMAGE_NAME}"
+          else
+            echo "S3 credentials not configured; skipping upload. Image artifact preserved in GitHub Actions run."
+          fi

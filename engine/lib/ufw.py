@@ -7,11 +7,22 @@ place — SP2 §6). Docker rules go through ufw-docker; host rules through plain
 """
 from __future__ import annotations
 import os
+import shutil
 
 APEX_START = "# START APEX.ERMNVLDMR.COM RULES"
 APEX_END = "# END APEX.ERMNVLDMR.COM RULES"
 OLD_PAIRS = [("# START ROOT.ERMNVLDMR.COM RULES", "# END ROOT.ERMNVLDMR.COM RULES")]
-UFW_DOCKER_BIN = os.path.expanduser("~/.local/bin/ufw-docker")
+
+def resolve_ufw_docker_bin() -> str:
+    """Find ufw-docker in PATH, /usr/local/bin, or fallback to ~/.local/bin/ufw-docker."""
+    found = shutil.which("ufw-docker")
+    if found:
+        return found
+    if os.path.isfile("/usr/local/bin/ufw-docker") and os.access("/usr/local/bin/ufw-docker", os.X_OK):
+        return "/usr/local/bin/ufw-docker"
+    return os.path.expanduser("~/.local/bin/ufw-docker")
+
+UFW_DOCKER_BIN = resolve_ufw_docker_bin()
 
 
 def clean_rules(text: str):
