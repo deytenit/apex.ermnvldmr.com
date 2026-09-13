@@ -29,6 +29,7 @@ write_files:
   - path: /home/adam/.ssh/id_ed25519
     owner: adam:adam
     permissions: '0600'
+    defer: true
     content: |
       -----BEGIN OPENSSH PRIVATE KEY-----
       # REPLACE WITH YOUR ED25519 DEPLOY PRIVATE KEY
