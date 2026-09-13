@@ -11,12 +11,16 @@ def run(ctx, args):
     log.info("Starting base system initialization...")
     if not os.path.isfile("/etc/debian_version"):
         log.error("Requires a Debian-based system (Debian/Ubuntu)."); raise SystemExit(1)
-    log.info("Updating package lists..."); s.sudo(["apt-get", "update", "-y"])
-    log.info("Installing essential packages...")
-    s.sudo(["apt-get", "install", "-y", "curl", "wget", "git", "rsyslog"])
+    needed = [p for p in ["curl", "wget", "git", "rsyslog"] if not shutil.which(p)]
+    if needed:
+        log.info("Updating package lists..."); s.sudo(["apt-get", "update", "-y"])
+        log.info(f"Installing missing essential packages: {', '.join(needed)}...")
+        s.sudo(["apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=60", *needed])
+    else:
+        log.info("Essential packages already installed.")
     s.ensure_running("rsyslog")
     if not shutil.which("ufw"):
-        log.info("Installing UFW..."); s.sudo(["apt-get", "install", "-y", "ufw"])
+        log.info("Installing UFW..."); s.sudo(["apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=60", "ufw"])
     else:
         log.info("UFW already installed.")
     from engine.lib.ufw import resolve_ufw_docker_bin

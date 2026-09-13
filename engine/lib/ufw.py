@@ -45,14 +45,16 @@ class Ufw:
                                anchor="# End required lines", old_pairs=OLD_PAIRS,
                                dry_run=dry_run, sudo=True)
 
-    def apply(self, rules_dir: str, config_dir=None, dry_run: bool = False) -> None:
-        # EX_NOINPUT guards first, tools second — same order/codes as root_template_ufw.
-        if not os.path.isdir(rules_dir):
+    def apply(self, rules_dir: str | None = None, config_dir: str | None = None, dry_run: bool = False) -> None:
+        if rules_dir and not os.path.isdir(rules_dir):
             self.log.error(f"Rules directory does not exist: {rules_dir}")
             raise SystemExit(66)
         if config_dir and not os.path.isdir(config_dir):
             self.log.error(f"Config directory does not exist: {config_dir}")
             raise SystemExit(66)
+        if not rules_dir and not config_dir:
+            self.log.warn("Neither docker nor host ufw rules directory found; nothing to apply.")
+            return
         if not self.sys.ok(["sudo", "ufw", "--version"]):
             self.log.error("ufw not installed/working via sudo. Run configure/base first.")
             raise SystemExit(1)
@@ -72,17 +74,18 @@ class Ufw:
             self._inject_file("/etc/ufw/before.rules", os.path.join(config_dir, "before.rules"), dry_run)
             self._inject_file("/etc/ufw/after.rules", os.path.join(config_dir, "after.rules"), dry_run)
 
-        rule_files = [fn for fn in sorted(os.listdir(rules_dir))
-                      if fn.endswith(".rules") and not fn.startswith(".")]
-        if not rule_files:
-            self.log.warn(f"No .rules files found in {rules_dir}, nothing to apply.")
-        for fn in rule_files:
-            for rule in clean_rules(open(os.path.join(rules_dir, fn)).read()):
-                self.log.info(f"Applying ufw-docker rule ({fn}): {rule}")
-                if dry_run:
-                    self.log.info(f"[DRY-RUN] sudo {UFW_DOCKER_BIN} {rule}")
-                else:
-                    self.sys.run(["sudo", UFW_DOCKER_BIN, *rule.split()], check=True)
+        if rules_dir:
+            rule_files = [fn for fn in sorted(os.listdir(rules_dir))
+                          if fn.endswith(".rules") and not fn.startswith(".")]
+            if not rule_files:
+                self.log.warn(f"No .rules files found in {rules_dir}, nothing to apply.")
+            for fn in rule_files:
+                for rule in clean_rules(open(os.path.join(rules_dir, fn)).read()):
+                    self.log.info(f"Applying ufw-docker rule ({fn}): {rule}")
+                    if dry_run:
+                        self.log.info(f"[DRY-RUN] sudo {UFW_DOCKER_BIN} {rule}")
+                    else:
+                        self.sys.run(["sudo", UFW_DOCKER_BIN, *rule.split()], check=True)
 
         self.log.success("All ufw rules applied.")
         self.log.warn("Run `sudo systemctl restart ufw` to apply. Ensure ssh is allowed via plain ufw!")
