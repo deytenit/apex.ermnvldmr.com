@@ -4,29 +4,76 @@
 # resolve against THIS dir — always use absolute ${APEX_*} vars). The engine exports
 # APEX_TIER*/APEX_TIER*_SHARED/APEX_TIER_ROOT*/APEX_SUBNET/APEX_NODE_FQDN at invoke.
 x-environment: &shared-environment
-  TZ: "${TZ:-Etc/UTC}"                        # override per node via TZ in the env; default UTC
+  TZ: "${TZ:-Etc/UTC}" # override per node via TZ in the env; default UTC
 
 services:
-  # --- edge (host network; profile-gated — a node opts in via COMPOSE_PROFILES) ---
-  xray:
-    image: ghcr.io/xtls/xray-core:26.3.27
-    container_name: apex-xray
-    profiles: [xray]
+
+  # --- optional: adguard (shares traefik netns) ---
+  adguard:
+    image: adguard/adguardhome:v0.107.72
+    container_name: apex-adguard
     volumes:
-      - ${APEX_TIER1}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
-      - ${APEX_TIER1_SHARED}/apex/letsencrypt:/etc/letsencrypt/live:ro
-      - ${APEX_TIER3_SHARED}/apex/xray/log:/var/log/xray/
-      - ${APEX_TIER3_SHARED}/apex/xray/shm:/dev/shm/xray/
+      - ${APEX_TIER1}/adguard/data:/opt/adguardhome/work
+      - ${APEX_TIER1}/adguard/conf:/opt/adguardhome/conf
     environment:
       <<: *shared-environment
-    network_mode: "host"
-    command: ["-c", "/etc/xray/config.jsonc"]
+    network_mode: "service:traefik"
     restart: unless-stopped
-    user: "0:0"
     labels:
-      # backup (resticontainer, core/all-nodes): xray config only (logs + shm are ephemeral)
+      # backup (resticontainer, core/all-nodes): adguard config only (work data regenerable)
       - "restic.enable=true"
-      - "restic.backup.paths=/etc/xray/config.jsonc"
+      - "restic.backup.paths=/opt/adguardhome/conf"
+    cap_add:
+      - NET_BIND_SERVICE
+      - SYS_NICE
+      - CAP_CHOWN
+    profiles: [ adguard ]
+    security_opt:
+      - no-new-privileges:true
+
+  # --- optional: observability agent (profile-gated) ---
+  # Grafana Alloy: one agent per node. Collects host metrics (node_exporter-
+  # equivalent) + container metrics (cadvisor) and PUSHES them via remote_write;
+  # collects systemd-journal + docker logs and PUSHES them to Loki. All targets
+  # are OUTBOUND to a central Prometheus + Loki (hosted on whichever node runs them), so
+  # Alloy needs egress (direct, not enclave). Replaces the old store-only `loki`
+  # service (which had no feeder). Config is a committed, env-parameterized asset.
+  alloy:
+    image: grafana/alloy:v1.17.1
+    container_name: apex-alloy
+    volumes:
+      - ${APEX_COMMONS}/assets/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${APEX_TIER2}/alloy/data:/var/lib/alloy
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro # cadvisor per-container stats on nodes using the containerd snapshotter (overlayfs)
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    environment:
+      <<: *shared-environment
+      APEX_NODE_HOST: "${APEX_NODE_HOST?error}" # node + instance metric/log labels
+      # push targets + machine auth (per-node scalars in apex.env / secret .env)
+      APEX_LOKI_PUSH_URL: "${APEX_LOKI_PUSH_URL?error}"
+      APEX_PROM_PUSH_URL: "${APEX_PROM_PUSH_URL?error}"
+      APEX_OBS_BASIC_AUTH_USER: "${APEX_OBS_BASIC_AUTH_USER?error}"
+      APEX_OBS_BASIC_AUTH_PASS: "${APEX_OBS_BASIC_AUTH_PASS?error}"
+    networks:
+      direct: {}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy
+      - /etc/alloy/config.alloy
+    restart: unless-stopped
+    user: "0:0" # root: required for host metrics, journal, and docker.sock
+    cgroup: host # host cgroup namespace: the cadvisor exporter needs it to read per-container cgroups (else machine-root only)
+    hostname: "${APEX_NODE_HOST}" # UTS hostname => node_exporter's node_uname_info `nodename` (else the container id)
+    profiles: [ alloy ]
     security_opt:
       - no-new-privileges:true
 
@@ -44,19 +91,18 @@ services:
   resticontainer:
     image: ghcr.io/deytenit/resticontainer:0.19.1
     container_name: apex-resticontainer
-    profiles: [manual]
     volumes:
       - ${APEX_TIER3}/restic/cache:/var/restic-cache
-      - /var/run/docker.sock:/var/run/docker.sock          # query + exec/stop/start
+      - /var/run/docker.sock:/var/run/docker.sock # query + exec/stop/start
       # apex tier data + checkouts live under /srv, and the @tierN bind mounts are
       # ABSOLUTE symlinks into /srv (compositions/<p>/@tierN -> /srv/com-…-tierN/<p>).
       # Mount /srv at the same path with RESTIC_HOSTFS=/ so restic follows those
       # symlinks and records the real host paths — a bare /:/hostfs cannot, because
       # the absolute symlink target /srv/… is dangling inside the container.
-      - /srv:/srv:ro                                        # read the data (resolves @tierN symlinks)
+      - /srv:/srv:ro # read the data (resolves @tierN symlinks)
     environment:
       <<: *shared-environment
-      RESTIC_HOSTFS: "/"                                    # mount sources are already absolute (/srv/…)
+      RESTIC_HOSTFS: "/" # mount sources are already absolute (/srv/…)
       RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY?error}"
       RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD?error}"
       AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID?error}"
@@ -72,12 +118,12 @@ services:
       RESTIC_COMPRESSION: "${APEX_RESTIC_COMPRESSION:-max}"
       RESTIC_CACHE_DIR: /var/restic-cache
     network_mode: "host"
+    profiles: [ manual ]
 
   # --- docker socket proxy ---
   socket-proxy:
     image: tecnativa/docker-socket-proxy:0
     container_name: apex-socket-proxy
-    user: "0:0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
@@ -87,14 +133,12 @@ services:
     networks:
       socket: {}
     restart: unless-stopped
+    user: "0:0"
 
   # --- edge reverse proxy (the core anchor on direct) ---
   traefik:
     image: traefik:3.6
     container_name: apex-traefik
-    user: "${APEX_UID?error}:${APEX_GID?error}"
-    group_add:
-      - "${APEX_SHARED_GID?error}"
     depends_on:
       - socket-proxy
     volumes:
@@ -155,75 +199,30 @@ services:
       # (letsencrypt certs are regenerable via ACME/Cloudflare DNS-01)
       - "restic.enable=true"
       - "restic.backup.paths=/etc/traefik/dynamic"
+    user: "${APEX_UID?error}:${APEX_GID?error}"
+    group_add:
+      - "${APEX_SHARED_GID?error}"
     security_opt:
       - no-new-privileges:true
-
-  # --- optional: adguard (shares traefik netns) ---
-  adguard:
-    image: adguard/adguardhome:v0.107.72
-    container_name: apex-adguard
-    profiles: [adguard]
+  xray:
+    image: ghcr.io/xtls/xray-core:26.3.27
+    container_name: apex-xray
     volumes:
-      - ${APEX_TIER1}/adguard/data:/opt/adguardhome/work
-      - ${APEX_TIER1}/adguard/conf:/opt/adguardhome/conf
+      - ${APEX_TIER1}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
+      - ${APEX_TIER1_SHARED}/apex/letsencrypt:/etc/letsencrypt/live:ro
+      - ${APEX_TIER3_SHARED}/apex/xray/log:/var/log/xray/
+      - ${APEX_TIER3_SHARED}/apex/xray/shm:/dev/shm/xray/
     environment:
       <<: *shared-environment
+    network_mode: "host"
+    command: [ "-c", "/etc/xray/config.jsonc" ]
+    restart: unless-stopped
     labels:
-      # backup (resticontainer, core/all-nodes): adguard config only (work data regenerable)
+      # backup (resticontainer, core/all-nodes): xray config only (logs + shm are ephemeral)
       - "restic.enable=true"
-      - "restic.backup.paths=/opt/adguardhome/conf"
-    network_mode: "service:traefik"
-    restart: unless-stopped
-    cap_add:
-      - NET_BIND_SERVICE
-      - SYS_NICE
-      - CAP_CHOWN
-    security_opt:
-      - no-new-privileges:true
-
-  # --- optional: observability agent (profile-gated) ---
-  # Grafana Alloy: one agent per node. Collects host metrics (node_exporter-
-  # equivalent) + container metrics (cadvisor) and PUSHES them via remote_write;
-  # collects systemd-journal + docker logs and PUSHES them to Loki. All targets
-  # are OUTBOUND to a central Prometheus + Loki (hosted on whichever node runs them), so
-  # Alloy needs egress (direct, not enclave). Replaces the old store-only `loki`
-  # service (which had no feeder). Config is a committed, env-parameterized asset.
-  alloy:
-    image: grafana/alloy:v1.17.1
-    container_name: apex-alloy
-    hostname: "${APEX_NODE_HOST}"   # UTS hostname => node_exporter's node_uname_info `nodename` (else the container id)
-    cgroup: host                    # host cgroup namespace: the cadvisor exporter needs it to read per-container cgroups (else machine-root only)
-    profiles: [alloy]
-    user: "0:0"  # root: required for host metrics, journal, and docker.sock
-    volumes:
-      - ${APEX_COMMONS}/assets/alloy/config.alloy:/etc/alloy/config.alloy:ro
-      - ${APEX_TIER2}/alloy/data:/var/lib/alloy
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro   # cadvisor per-container stats on nodes using the containerd snapshotter (overlayfs)
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-      - /var/log/journal:/var/log/journal:ro
-      - /run/log/journal:/run/log/journal:ro
-      - /etc/machine-id:/etc/machine-id:ro
-    environment:
-      <<: *shared-environment
-      APEX_NODE_HOST: "${APEX_NODE_HOST?error}"        # node + instance metric/log labels
-      # push targets + machine auth (per-node scalars in apex.env / secret .env)
-      APEX_LOKI_PUSH_URL: "${APEX_LOKI_PUSH_URL?error}"
-      APEX_PROM_PUSH_URL: "${APEX_PROM_PUSH_URL?error}"
-      APEX_OBS_BASIC_AUTH_USER: "${APEX_OBS_BASIC_AUTH_USER?error}"
-      APEX_OBS_BASIC_AUTH_PASS: "${APEX_OBS_BASIC_AUTH_PASS?error}"
-    command:
-      - run
-      - --server.http.listen-addr=0.0.0.0:12345
-      - --storage.path=/var/lib/alloy
-      - /etc/alloy/config.alloy
-    networks:
-      direct: {}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
+      - "restic.backup.paths=/etc/xray/config.jsonc"
+    user: "0:0"
+    profiles: [ xray ]
     security_opt:
       - no-new-privileges:true
 

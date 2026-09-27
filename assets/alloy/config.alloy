@@ -25,6 +25,7 @@ prometheus.exporter.unix "node" {
 prometheus.exporter.cadvisor "containers" {
   docker_host            = "unix:///var/run/docker.sock"
   store_container_labels = true
+  docker_only            = true
 }
 
 // Stamp a static `node` label onto each exporter's targets.
