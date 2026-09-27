@@ -23,9 +23,21 @@ prometheus.exporter.unix "node" {
 
 // Container metrics (cadvisor-equivalent) via the docker socket.
 prometheus.exporter.cadvisor "containers" {
-  docker_host            = "unix:///var/run/docker.sock"
-  store_container_labels = true
-  docker_only            = true
+  docker_host                  = "unix:///var/run/docker.sock"
+  store_container_labels       = false
+  allowlisted_container_labels = [
+    "com.docker.compose.project",
+    "com.docker.compose.service",
+  ]
+  docker_only                  = true
+  enabled_metrics              = [
+    "cpu",
+    "cpuLoad",
+    "diskIO",
+    "memory",
+    "network",
+    "oom_event",
+  ]
 }
 
 // Stamp a static `node` label onto each exporter's targets.
@@ -61,12 +73,12 @@ discovery.relabel "container_metrics" {
 prometheus.scrape "node" {
   targets         = discovery.relabel.node_metrics.output
   forward_to      = [prometheus.remote_write.default.receiver]
-  scrape_interval = "15s"
+  scrape_interval = "30s"
 }
 prometheus.scrape "containers" {
   targets         = discovery.relabel.container_metrics.output
   forward_to      = [prometheus.remote_write.default.receiver]
-  scrape_interval = "15s"
+  scrape_interval = "30s"
 }
 
 // CrowdSec agent metrics. CrowdSec runs on the host (not a container) and exposes Prometheus
@@ -92,6 +104,18 @@ prometheus.remote_write "default" {
       username = sys.env("APEX_OBS_BASIC_AUTH_USER")
       password = sys.env("APEX_OBS_BASIC_AUTH_PASS")
     }
+    queue_config {
+      capacity             = 2500
+      max_shards           = 2
+      min_shards           = 1
+      max_samples_per_send = 500
+      batch_send_deadline  = "5s"
+    }
+  }
+  wal {
+    truncate_frequency = "30m"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "30m"
   }
 }
 

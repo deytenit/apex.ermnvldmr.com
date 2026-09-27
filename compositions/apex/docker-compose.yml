@@ -60,6 +60,8 @@ services:
       APEX_PROM_PUSH_URL: "${APEX_PROM_PUSH_URL?error}"
       APEX_OBS_BASIC_AUTH_USER: "${APEX_OBS_BASIC_AUTH_USER?error}"
       APEX_OBS_BASIC_AUTH_PASS: "${APEX_OBS_BASIC_AUTH_PASS?error}"
+      GOMEMLIMIT: "${ALLOY_GOMEMLIMIT:-160MiB}"
+      GOGC: "${ALLOY_GOGC:-75}"
     networks:
       direct: {}
     extra_hosts:
