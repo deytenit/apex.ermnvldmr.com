@@ -10,7 +10,7 @@ services:
 
   # --- optional: adguard (shares traefik netns) ---
   adguard:
-    image: adguard/adguardhome:v0.107.72
+    image: adguard/adguardhome:v0.107.79
     container_name: apex-adguard
     volumes:
       - ${APEX_TIER1}/adguard/data:/opt/adguardhome/work
@@ -39,7 +39,7 @@ services:
   # Alloy needs egress (direct, not enclave). Replaces the old store-only `loki`
   # service (which had no feeder). Config is a committed, env-parameterized asset.
   alloy:
-    image: grafana/alloy:v1.17.1
+    image: grafana/alloy:v1.20.0
     container_name: apex-alloy
     volumes:
       - ${APEX_COMMONS}/assets/alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -137,7 +137,7 @@ services:
 
   # --- edge reverse proxy (the core anchor on direct) ---
   traefik:
-    image: traefik:3.6
+    image: traefik:3.7
     container_name: apex-traefik
     depends_on:
       - socket-proxy
@@ -205,7 +205,7 @@ services:
     security_opt:
       - no-new-privileges:true
   xray:
-    image: ghcr.io/xtls/xray-core:26.3.27
+    image: ghcr.io/xtls/xray-core:26.9.9
     container_name: apex-xray
     volumes:
       - ${APEX_TIER1}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
