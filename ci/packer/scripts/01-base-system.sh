@@ -10,6 +10,16 @@ apt-get install -y --no-install-recommends \
   parted fdisk pciutils usbutils smartmontools tmux vim less tree bash-completion \
   git python3 python3-minimal sudo rsyslog cron qemu-guest-agent
 
+# Prevent apt from retaining downloaded archives on disk
+echo 'APT::Keep-Downloaded-Packages "0";' > /etc/apt/apt.conf.d/99-apex
+
+# Limit systemd journal disk usage
+mkdir -p /etc/systemd/journald.conf.d
+cat << 'EOF_JOURNAL' > /etc/systemd/journald.conf.d/99-apex.conf
+[Journal]
+SystemMaxUse=200M
+EOF_JOURNAL
+
 echo "=== [2/6] Configuring Sudo & Passwordless Escalation ==="
 cat << 'EOF_SUDO' > /etc/sudoers.d/99-apex
 %sudo ALL=(ALL:ALL) NOPASSWD: ALL

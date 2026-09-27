@@ -19,6 +19,36 @@ def run(ctx, args):
     else:
         log.info("Essential packages already installed.")
     s.ensure_running("rsyslog")
+
+    # Configure APT to discard downloaded archives
+    apt_clean_path = "/etc/apt/apt.conf.d/99-apex"
+    apt_clean_content = 'APT::Keep-Downloaded-Packages "0";\n'
+    if os.path.exists("/etc/apt/apt.conf.d/01clean"):
+        s.sudo(["rm", "-f", "/etc/apt/apt.conf.d/01clean"])
+    try:
+        current_apt = open(apt_clean_path).read() if os.path.exists(apt_clean_path) else None
+    except Exception:
+        current_apt = None
+    if current_apt != apt_clean_content:
+        log.info("Configuring APT to discard downloaded archives...")
+        s.sudo(["tee", apt_clean_path], input=apt_clean_content)
+
+    # Limit systemd-journald max disk usage
+    journal_d = "/etc/systemd/journald.conf.d"
+    journal_conf = os.path.join(journal_d, "99-apex.conf")
+    journal_content = "[Journal]\nSystemMaxUse=200M\n"
+    if os.path.exists(os.path.join(journal_d, "maxuse.conf")):
+        s.sudo(["rm", "-f", os.path.join(journal_d, "maxuse.conf")])
+    try:
+        current_journal = open(journal_conf).read() if os.path.exists(journal_conf) else None
+    except Exception:
+        current_journal = None
+    if current_journal != journal_content:
+        log.info("Configuring systemd-journald SystemMaxUse=200M...")
+        s.sudo(["mkdir", "-p", journal_d])
+        s.sudo(["tee", journal_conf], input=journal_content)
+        s.sudo(["systemctl", "restart", "systemd-journald"])
+
     if not shutil.which("ufw"):
         log.info("Installing UFW..."); s.sudo(["apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=60", "ufw"])
     else:
