@@ -105,11 +105,13 @@ prometheus.remote_write "default" {
       password = sys.env("APEX_OBS_BASIC_AUTH_PASS")
     }
     queue_config {
-      capacity             = 2500
-      max_shards           = 2
+      capacity             = 5000
+      max_shards           = 10
       min_shards           = 1
-      max_samples_per_send = 500
+      max_samples_per_send = 1000
       batch_send_deadline  = "5s"
+      min_backoff          = "100ms"
+      max_backoff          = "10s"
     }
   }
   wal {
