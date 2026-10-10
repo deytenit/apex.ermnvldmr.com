@@ -219,6 +219,7 @@ def _directory(path, mounts, pool=None):
     created = not path.exists()
     if created:
         path.mkdir(mode=0o755)
+        path.chmod(0o755)
     return created
 
 

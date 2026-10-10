@@ -146,6 +146,24 @@ class TestStorage(unittest.TestCase):
         self.assertTrue(result['tiers'][1]['created'])
         self.assertEqual(result['swap']['status'], 'skipped')
 
+    def test_new_directory_mode_is_exact_under_restrictive_umask(self):
+        self.srv.chmod(0o710)
+        previous_umask = os.umask(0o077)
+        try:
+            reconcile_storage(enrollment(), self.state, self.save)
+        finally:
+            os.umask(previous_umask)
+        self.assertEqual((self.srv / 'tier-1.node').stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.srv.stat().st_mode & 0o777, 0o710)
+
+    def test_preexisting_directory_keeps_restrictive_mode(self):
+        path = self.srv / 'tier-1.node'
+        path.mkdir()
+        path.chmod(0o700)
+        result = reconcile_storage(enrollment(), self.state, self.save)
+        self.assertFalse(result['tiers'][0]['created'])
+        self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+
     def test_directory_symlink_and_unexpected_mount_are_rejected(self):
         path = self.srv / 'tier-1.node'
         path.symlink_to(self.root)
