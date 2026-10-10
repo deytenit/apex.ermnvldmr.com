@@ -21,7 +21,7 @@ def run(ctx, args):
         abs_dest = os.path.realpath(args.dest_dir)
         log.info(f"Extracting certs: {abs_src} -> {abs_dest}")
         ctx.sys.run(["docker", "run", "--rm", "-v", f"{src_dir}:/data", "-v", f"{abs_dest}:/output",
-                     "ldez/traefik-certs-dumper:v2.9.3", "file", "--version", "v3",
+                     "ldez/traefik-certs-dumper:v2.11.4", "file", "--version", "v3",
                      "--source", f"/data/{src_file}", "--dest", "/output", "--domain-subdir=true",
                      "--crt-name=fullchain", "--crt-ext=.pem", "--key-name=privkey", "--key-ext=.pem"],
                     check=True)
