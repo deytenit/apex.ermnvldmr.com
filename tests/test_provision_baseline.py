@@ -1,5 +1,6 @@
 """Exercise baseline decisions with a temporary host filesystem and fake commands."""
 import hashlib
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -24,6 +25,9 @@ class Host:
         self.plan = ''
         self.zfs_available = True
         self.docker_root = '/srv/docker'
+        self.bouncer_key = 'testOnlyGeneratedCredential1234567890'
+        self.registration_failure = False
+        self.registrations = {}
         self.path('/etc/os-release').parent.mkdir(parents=True)
         self.path('/etc/os-release').write_text('ID=debian\nVERSION_ID="13"\n')
         self.path('/etc/debian_version').touch()
@@ -52,9 +56,23 @@ class Host:
                 code = 100
             else:
                 start = args.index('--no-remove') + 1
+                # Reproduce dpkg configuring the bouncer before CrowdSec in one batch.
+                if 'crowdsec-firewall-bouncer-iptables' in args[start:]:
+                    config = self.path('/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml')
+                    config.parent.mkdir(parents=True, exist_ok=True)
+                    if not config.exists():
+                        key = 'packageGeneratedCredential123456789' if 'crowdsec' in self.installed else '<API_KEY>'
+                        config.write_text(f'api_url: http://127.0.0.1:8080/\napi_key: {key}\nmode: iptables\n')
+                        config.chmod(0o640)
                 for name in args[start:]:
                     self.installed[name] = '1.0'
                     self.partial.pop(name, None)
+        elif args[:4] == ['cscli', '-oraw', 'bouncers', 'add']:
+            if self.registration_failure:
+                code, output = 1, 'sensitive diagnostic'
+            else:
+                output = self.bouncer_key + '\n'
+                self.registrations[args[4]] = self.bouncer_key
         elif args[0] == 'systemctl':
             service = args[-1]
             operation = args[1]
@@ -238,6 +256,161 @@ class BaselineTests(unittest.TestCase):
         repeated = self.host.commands[count:]
         self.assertFalse(any(command[0] == 'apt-get' or command[:2] in
                              (['systemctl', 'restart'], ['systemctl', 'start']) for command in repeated))
+
+    def bouncer_config(self, key='<API_KEY>'):
+        self.host.installed.update({'crowdsec': '1.8.1', 'crowdsec-firewall-bouncer-iptables': '0.0.36'})
+        config = self.host.path('/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml')
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(f'# custom settings\napi_url: http://127.0.0.1:9090/\napi_key: {key} # keep comment\nmode: iptables\nblacklists_ipv4: [custom]\n')
+        config.chmod(0o640)
+        return config
+
+    def test_fresh_crowdsec_is_configured_before_bouncer_install(self):
+        self.apply()
+        installs = [args for args in self.host.commands if args[0] == 'apt-get' and 'install' in args and '--simulate' not in args]
+        crowdsec = next(index for index, args in enumerate(installs) if 'crowdsec' in args)
+        bouncer = next(index for index, args in enumerate(installs) if 'crowdsec-firewall-bouncer-iptables' in args)
+        self.assertLess(crowdsec, bouncer)
+        self.assertFalse(self.host.registrations)
+        self.assertFalse(self.host.active & {'crowdsec', 'crowdsec-firewall-bouncer'})
+
+    def test_broken_installed_bouncer_is_repaired_and_repeat_preserves_registration(self):
+        config = self.bouncer_config()
+        before = config.read_text()
+        owner = (config.stat().st_uid, config.stat().st_gid)
+        self.apply()
+        self.assertEqual(config.read_text(), before.replace('<API_KEY>', self.host.bouncer_key))
+        registration = config.with_suffix('.yaml.id').read_text().strip()
+        self.assertEqual(self.host.registrations[registration], self.host.bouncer_key)
+        self.assertEqual((config.stat().st_uid, config.stat().st_gid), owner)
+        self.assertEqual(config.stat().st_mode & 0o777, 0o640)
+        count = len(self.host.registrations)
+        self.apply()
+        self.assertEqual(len(self.host.registrations), count)
+        self.assertFalse(self.host.active & {'crowdsec', 'crowdsec-firewall-bouncer'})
+
+    def test_existing_bouncer_key_and_custom_settings_are_preserved(self):
+        config = self.bouncer_config('existing-custom-key')
+        before = config.read_bytes()
+        self.apply()
+        self.assertEqual(config.read_bytes(), before)
+        self.assertFalse(self.host.registrations)
+
+    def test_registration_failure_leaves_placeholder_without_exposing_output(self):
+        config = self.bouncer_config()
+        before = config.read_bytes()
+        self.host.registration_failure = True
+        with self.assertRaises(baseline.BaselineError) as failure:
+            self.apply()
+        self.assertEqual(config.read_bytes(), before)
+        self.assertFalse(config.with_suffix('.yaml.id').exists())
+        self.assertNotIn('sensitive diagnostic', str(failure.exception))
+
+    def test_invalid_registered_key_is_not_published(self):
+        for key in ('', '<API_KEY>', 'not a key\nsensitive diagnostic'):
+            with self.subTest(key=key):
+                config = self.bouncer_config()
+                before = config.read_bytes()
+                self.host.bouncer_key = key
+                with self.assertRaises(baseline.BaselineError):
+                    self.apply()
+                self.assertEqual(config.read_bytes(), before)
+                self.assertFalse(config.with_suffix('.yaml.id').exists())
+
+    def test_bouncer_config_symlink_is_rejected_before_registration(self):
+        config = self.bouncer_config()
+        destination = config.with_suffix('.provider')
+        config.rename(destination)
+        config.symlink_to(destination)
+        with self.assertRaises(baseline.BaselineError):
+            self.apply()
+        self.assertIn('<API_KEY>', destination.read_text())
+        self.assertFalse(self.host.registrations)
+
+    def test_quoted_null_is_an_existing_key_not_an_uninitialized_yaml_value(self):
+        config = self.bouncer_config('"null"')
+        before = config.read_bytes()
+        self.apply()
+        self.assertEqual(config.read_bytes(), before)
+        self.assertFalse(self.host.registrations)
+
+    def test_package_placeholder_variants_are_repaired(self):
+        for placeholder in ('"<API_KEY>"', "'$API_KEY'", '${API_KEY}', 'null', '~', '', '""'):
+            with self.subTest(placeholder=placeholder):
+                config = self.bouncer_config(placeholder)
+                self.apply()
+                self.assertIn('api_key: ' + self.host.bouncer_key, config.read_text())
+
+    def test_ambiguous_or_missing_api_key_is_not_mutated(self):
+        for content in ('api_key: <API_KEY>\n"api_key": existing-key\n', 'api_url: http://localhost:8080/\n',
+                        'api_key: "<API_KEY>x\n'):
+            with self.subTest(content=content):
+                config = self.bouncer_config()
+                config.write_text(content)
+                with self.assertRaises(baseline.BaselineError):
+                    self.apply()
+                self.assertEqual(config.read_text(), content)
+                self.assertFalse(self.host.registrations)
+
+    def test_multiline_custom_credentials_are_preserved_without_registration(self):
+        for credential in ('\n  existing-custom-credential', ' # comment\n\n  existing-custom-credential',
+                           ' <API_KEY>\n  existing-custom-credential', '\n  # comment\n  existing-custom-credential'):
+            with self.subTest(credential=credential):
+                config = self.bouncer_config()
+                config.write_text('api_key:' + credential + '\napi_url: http://localhost:9090/\n')
+                identity = config.with_suffix('.yaml.id')
+                identity.write_text('existing-registration\n')
+                before = config.read_bytes()
+                with self.assertRaises(baseline.BaselineError):
+                    self.apply()
+                self.assertEqual(config.read_bytes(), before)
+                self.assertEqual(identity.read_text(), 'existing-registration\n')
+                self.assertFalse(self.host.registrations)
+
+    @unittest.skipUnless(importlib.util.find_spec('yaml'), 'target-only python3-yaml is unavailable')
+    def test_empty_credential_replacement_parses_as_the_generated_key(self):
+        import yaml
+        for entry in ('api_key:', 'api_key: # comment', 'api_key:    ',
+                      'api_key:\n  # next-line comment'):
+            with self.subTest(entry=entry):
+                config = self.bouncer_config()
+                config.write_text(entry + '\napi_url: http://localhost:9090/\n')
+                self.assertIsNone(yaml.safe_load(config.read_text())['api_key'])
+                self.apply()
+                parsed = yaml.safe_load(config.read_text())
+                self.assertEqual(parsed['api_key'], self.host.bouncer_key)
+                self.assertEqual(parsed['api_url'], 'http://localhost:9090/')
+                if '# ' in entry:
+                    self.assertIn(entry[entry.index('# '):], config.read_text())
+
+    def test_redirected_bookkeeping_is_rejected_before_registration(self):
+        config = self.bouncer_config()
+        destination = config.with_suffix('.provider')
+        destination.write_text('provider-data')
+        config.with_suffix('.yaml.id').symlink_to(destination)
+        with self.assertRaises(baseline.BaselineError):
+            self.apply()
+        self.assertEqual(destination.read_text(), 'provider-data')
+        self.assertFalse(self.host.registrations)
+
+    def test_interrupted_credential_publication_can_retry_without_reusing_wrong_identity(self):
+        config = self.bouncer_config()
+        replace = baseline.os.replace
+        def interrupt_config(source, destination):
+            if destination == config:
+                raise OSError('interrupted publication')
+            return replace(source, destination)
+        with patch.object(baseline.os, 'replace', side_effect=interrupt_config):
+            with self.assertRaises(baseline.BaselineError):
+                self.apply()
+        self.assertIn('<API_KEY>', config.read_text())
+        orphan = config.with_suffix('.yaml.id').read_text().strip()
+        self.assertIn(orphan, self.host.registrations)
+        self.apply()
+        current = config.with_suffix('.yaml.id').read_text().strip()
+        self.assertNotEqual(orphan, current)
+        self.assertIn(self.host.registrations[current], config.read_text())
+        self.assertFalse(list(config.parent.glob('.apex-*')))
 
     def test_zfs_missing_for_running_kernel_is_an_explicit_incomplete_result(self):
         self.host.zfs_available = False

@@ -120,12 +120,12 @@ The running Debian kernel must have matching headers available. If the provider
 installed an obsolete kernel, install a supported kernel and headers and reboot
 before enrollment; the initializer does not reboot the server automatically.
 
-Earlier isolated Debian 13 VM checks cover SSH enrollment, completed-run retries,
-watchdog recovery after disconnect and reboot, safe storage handling, and two
-independent Packer/cloud-init clones. The added security activation transaction
-still requires its Debian VM verification before production enrollment.
-Production enrollment also requires a
-published node repository with a compatible, available commons pin.
+Isolated Debian 13 VM checks cover the shared package baseline, credential repair,
+SSH and security activation, completed-run retries, watchdog and reboot recovery,
+and preservation of administrator edits during interrupted recovery. Earlier checks
+also cover safe storage handling and two independent Packer/cloud-init clones.
+Production enrollment requires a published node repository with a compatible,
+available commons pin.
 The [composition replication RFC](docs/rfcs/composition-replication.md) defines how
 independent node repositories can host replicas of selected compositions.
 

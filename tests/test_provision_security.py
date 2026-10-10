@@ -75,14 +75,18 @@ class SecurityHost(Host):
         self.commands = []
         self.decisions = []
         self.runtime_overrides = {}
+        self.runtime_chains = {name: {'DOCKER-USER': ['-N DOCKER-USER'],
+                                      'ADMIN-SENTINEL': ['-N ADMIN-SENTINEL', '-A ADMIN-SENTINEL -j RETURN']}
+                               for name in ('iptables', 'ip6tables')}
         self.forward_hook = True
         self.fail = None
         self.after_command = None
+        self.pending_starts = set()
         contents = {
             '/etc/default/ufw': 'IPV6=yes\nDEFAULT_INPUT_POLICY="ACCEPT"\nDEFAULT_OUTPUT_POLICY="ACCEPT"\nDEFAULT_FORWARD_POLICY="DROP"\n',
             '/etc/ufw/ufw.conf': 'ENABLED=no\n',
-            '/etc/ufw/user.rules': '*filter\nCOMMIT\n',
-            '/etc/ufw/user6.rules': '*filter\nCOMMIT\n',
+            '/etc/ufw/user.rules': '*filter\n-A ufw-after-logging-forward -j LOG --log-prefix "[UFW BLOCK] " -m limit --limit 3/min --limit-burst 10\nCOMMIT\n',
+            '/etc/ufw/user6.rules': '*filter\n-A ufw6-after-logging-forward -j LOG --log-prefix "[UFW BLOCK] " -m limit --limit 3/min --limit-burst 10\nCOMMIT\n',
             '/etc/ufw/before.rules': '*filter\nCOMMIT\n',
             '/etc/ufw/before6.rules': '*filter\nCOMMIT\n',
             '/etc/ufw/after.rules': '*filter\nCOMMIT\n',
@@ -94,6 +98,7 @@ class SecurityHost(Host):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
         self.conffiles = {'/etc/default/ufw': hashlib.md5(contents['/etc/default/ufw'].encode()).hexdigest()}
+        self.bouncer_conffiles = {}
         checksums = []
         for name, content in contents.items():
             if not name.startswith('/etc/ufw/'):
@@ -108,6 +113,25 @@ class SecurityHost(Host):
         manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text('\n'.join(checksums) + '\n')
 
+    def load_helper_runtime(self):
+        for executable, filename, fixture in (('iptables', 'after.rules', HELPER_V4),
+                                              ('ip6tables', 'after6.rules', HELPER_V6)):
+            if executable == 'ip6tables' and 'IPV6=yes' not in self.path('/etc/default/ufw').read_text():
+                continue
+            if '# BEGIN UFW AND DOCKER' not in self.path('/etc/ufw/' + filename).read_text():
+                continue
+            logging_chain = 'ufw6-docker-logging-deny' if executable == 'ip6tables' else 'ufw-docker-logging-deny'
+            for chain in ('DOCKER-USER', logging_chain):
+                self.runtime_chains[executable][chain] = ['-N ' + chain] + [
+                    line for line in fixture.splitlines() if line.startswith('-A ' + chain + ' ')]
+
+    def assert_restore_scope(self, args):
+        if '--noflush' not in args:
+            raise AssertionError('whole-table restore is forbidden')
+        if Path(args[-1]).stat().st_mode & 0o777 != 0o600:
+            raise AssertionError('restore input must be private')
+
+
     def command(self, args, check=True):
         self.commands.append(args)
         output, code = '', 0
@@ -116,26 +140,57 @@ class SecurityHost(Host):
         elif args[:2] == ['ufw', 'status']:
             output = 'Status: ' + ('active' if self.active else 'inactive')
         elif args[0] == 'dpkg-query':
-            output = '\n'.join(' ' + name + ' ' + digest for name, digest in self.conffiles.items())
+            conffiles = self.bouncer_conffiles if args[-1] == 'crowdsec-firewall-bouncer-iptables' else self.conffiles
+            output = '\n'.join(' ' + name + ' ' + digest for name, digest in conffiles.items())
         elif args[0] in ('iptables', 'ip6tables'):
             if args[1] == '-C':
                 code = 0 if self.forward_hook else 1
-            elif self.active and '# BEGIN UFW AND DOCKER' in self.path('/etc/ufw/after.rules').read_text():
-                fixture = HELPER_V6 if args[0] == 'ip6tables' else HELPER_V4
-                chain = args[2]
-                output = self.runtime_overrides.get((args[0], chain), '-N ' + chain + '\n' + '\n'.join(
-                    line for line in fixture.splitlines() if line.startswith('-A ' + chain + ' ')) + '\n')
+            elif args[1] == '-S':
+                chains = self.runtime_chains[args[0]]
+                if len(args) == 3:
+                    chain = args[2]
+                    code = 0 if chain in chains else 1
+                    output = self.runtime_overrides.get((args[0], chain), '\n'.join(chains.get(chain, [])) + '\n')
+                else:
+                    output = '-P FORWARD ACCEPT\n' + ('-A FORWARD -j DOCKER-USER\n' if self.forward_hook else '')
+                    output += ''.join(self.runtime_overrides.get((args[0], chain), '\n'.join(lines) + '\n')
+                                      for chain, lines in chains.items())
             else:
-                output = '-N DOCKER-USER\n-A DOCKER-USER -j RETURN\n'
+                raise AssertionError(args)
+        elif args[0] in ('iptables-restore', 'ip6tables-restore'):
+            self.assert_restore_scope(args)
+            executable = args[0].removesuffix('-restore')
+            chains = copy.deepcopy(self.runtime_chains[executable])
+            for line in Path(args[-1]).read_text().splitlines():
+                if line in ('*filter', 'COMMIT'):
+                    continue
+                operation, chain, *rest = line.split()
+                if operation == '-F':
+                    chains[chain] = ['-N ' + chain]
+                elif operation == '-A':
+                    chains[chain].append(line)
+                elif operation == '-X':
+                    del chains[chain]
+                else:
+                    raise AssertionError(line)
+            self.runtime_chains[executable] = chains
         elif args[0] == '/usr/local/bin/ufw-docker':
             if args[1] == 'check':
                 code = 0 if '# BEGIN UFW AND DOCKER' in self.path('/etc/ufw/after.rules').read_text() else 1
             elif args[1] == 'install':
+                if not self.active:
+                    raise RuntimeError('UFW is disabled')
                 for name in ('after.rules', 'after6.rules'):
                     path = self.path('/etc/ufw/' + name)
                     path.write_text(path.read_text() + (HELPER_V6 if name == 'after6.rules' else HELPER_V4))
         elif args[0] == 'ufw':
             if 'allow' in args and 'proto' in args:
+                if args[1:3] == ['insert', '1'] and not any(
+                        '### tuple ###' in self.path('/etc/ufw/' + name).read_text()
+                        for name in ('user.rules', 'user6.rules')):
+                    if check:
+                        raise RuntimeError("ERROR: Invalid position '1'")
+                    return subprocess.CompletedProcess(args, 1, '', "ERROR: Invalid position '1'")
                 source, port = args[args.index('from') + 1], args[args.index('port') + 1]
                 v6 = ipaddress.ip_network(source, strict=False).version == 6
                 path = self.path('/etc/ufw/user6.rules' if v6 else '/etc/ufw/user.rules')
@@ -148,12 +203,24 @@ class SecurityHost(Host):
             elif args[-1] in ('enable', 'disable'):
                 self.active = args[-1] == 'enable'
                 self.path('/etc/ufw/ufw.conf').write_text('ENABLED=' + ('yes' if self.active else 'no') + '\n')
+                if self.active and 'DEFAULT_FORWARD_POLICY="ACCEPT"' in self.path('/etc/default/ufw').read_text():
+                    for name, prefix in (('user.rules', 'ufw'), ('user6.rules', 'ufw6')):
+                        path = self.path('/etc/ufw/' + name)
+                        path.write_text(''.join(line for line in path.read_text().splitlines(keepends=True)
+                                                if not line.startswith('-A ' + prefix + '-after-logging-forward -j LOG ')))
             elif args[-1] != 'reload':
                 raise AssertionError(args)
+            if self.active and args[-1] in ('enable', 'reload'):
+                self.load_helper_runtime()
         elif args[0] == 'systemctl':
             field, value = {'enable': ('UnitFileState', 'enabled'), 'disable': ('UnitFileState', 'disabled'),
-                            'start': ('ActiveState', 'active'), 'stop': ('ActiveState', 'inactive')}[args[1]]
+                            'start': ('ActiveState', 'active'), 'stop': ('ActiveState', 'inactive'),
+                            'reset-failed': ('ActiveState', 'inactive')}[args[1]]
+            if args[1] == 'reset-failed' and self.services[args[2]]['ActiveState'] != 'failed':
+                raise AssertionError('reset-failed must only follow an observed failure')
             self.services[args[2]][field] = value
+            if args[1] == 'stop':
+                self.pending_starts.discard(args[2])
             if args[1:3] == ['stop', 'ufw']:
                 self.active = False
         elif args[0] == 'crowdsec':
@@ -202,6 +269,33 @@ class SecurityTests(unittest.TestCase):
         with self.assertRaises(security.SecurityError):
             self.adapter.preflight()
         self.assertFalse(self.host.active)
+
+    def test_packaged_bouncer_unit_in_etc_can_activate_and_restore(self):
+        name = '/etc/systemd/system/crowdsec-firewall-bouncer.service'
+        path = self.host.path(name)
+        path.parent.mkdir(parents=True)
+        path.write_text('[Service]\nExecStart=/usr/bin/crowdsec-firewall-bouncer\n')
+        self.host.bouncer_conffiles[name] = hashlib.md5(path.read_bytes()).hexdigest()
+        self.host.services['crowdsec-firewall-bouncer']['FragmentPath'] = name
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.assertEqual(self.host.services['crowdsec-firewall-bouncer']['ActiveState'], 'active')
+        self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.services['crowdsec-firewall-bouncer']['ActiveState'], 'inactive')
+        self.assertEqual(state['cleanup'], 'complete')
+
+    def test_modified_or_unmanaged_bouncer_unit_in_etc_refuses_before_activation(self):
+        name = '/etc/systemd/system/crowdsec-firewall-bouncer.service'
+        path = self.host.path(name)
+        path.parent.mkdir(parents=True)
+        path.write_text('[Service]\nExecStart=/usr/bin/crowdsec-firewall-bouncer\n')
+        self.host.services['crowdsec-firewall-bouncer']['FragmentPath'] = name
+        for conffiles in ({}, {name: '0' * 32}):
+            with self.subTest(conffiles=conffiles):
+                self.host.bouncer_conffiles = conffiles
+                with self.assertRaises(security.SecurityError):
+                    self.adapter.preflight()
+                self.assertFalse(self.host.active)
 
     def test_native_generated_ufw_files_are_verified_against_package_templates(self):
         self.assertEqual(set(self.host.conffiles), {'/etc/default/ufw'})
@@ -254,6 +348,20 @@ class SecurityTests(unittest.TestCase):
             self.assertEqual(service['ActiveState'], 'active')
             self.assertEqual(service['UnitFileState'], 'enabled')
         self.adapter.verify(state)
+
+    def test_bootstrap_allowance_exists_when_pristine_firewall_first_activates(self):
+        enabled = []
+        def inspect_enable(args):
+            if args == ['ufw', '--force', 'enable']:
+                rules = self.host.path('/etc/ufw/user.rules').read_text()
+                self.assertIn('192.0.2.10', rules)
+                self.assertIn('2222', rules)
+                self.assertIn('2222', self.host.path('/etc/ufw/user6.rules').read_text())
+                enabled.append(True)
+        self.host.after_command = inspect_enable
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.assertEqual(enabled, [True])
 
     def test_active_policy_survives_activation_and_rollback(self):
         self.host.active = True
@@ -309,6 +417,132 @@ class SecurityTests(unittest.TestCase):
             self.assertEqual(service['UnitFileState'], 'disabled')
         self.assertEqual(state['cleanup'], 'complete')
 
+    def test_rollback_restores_live_helper_chains_and_allows_next_preflight(self):
+        for original in (['-N DOCKER-USER'], ['-N DOCKER-USER', '-A DOCKER-USER -j RETURN']):
+            with self.subTest(original=original):
+                for executable in ('iptables', 'ip6tables'):
+                    self.host.runtime_chains[executable]['DOCKER-USER'] = original[:]
+                before = copy.deepcopy(self.host.runtime_chains)
+                state = self.prepared()
+                self.adapter.activate(state, self.persist)
+                self.adapter.restore(state, self.persist)
+                self.assertEqual(self.host.runtime_chains, before)
+                self.assertTrue(self.host.forward_hook)
+                self.assertTrue(self.adapter.preflight()['pristine'])
+
+    def test_preexisting_helper_specific_chain_is_rejected_before_mutation(self):
+        self.host.runtime_chains['ip6tables']['ufw6-docker-logging-deny'] = ['-N ufw6-docker-logging-deny']
+        before = copy.deepcopy(self.host.runtime_chains)
+        with self.assertRaises(security.SecurityError):
+            self.adapter.preflight()
+        self.assertEqual(self.host.runtime_chains, before)
+        self.assertFalse(self.host.active)
+
+    def test_docker_runtime_must_match_preflight_at_capture(self):
+        plan = self.adapter.preflight()
+        self.host.runtime_chains['iptables']['DOCKER-USER'].append('-A DOCKER-USER -j RETURN')
+        with self.assertRaises(security.SecurityError):
+            self.adapter.snapshot(plan, 22, '192.0.2.10')
+        self.assertFalse(self.host.active)
+
+    def test_changed_helper_runtime_is_preserved_while_access_recovers(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.host.runtime_chains['iptables']['DOCKER-USER'].append('-A DOCKER-USER -j ACCEPT')
+        before = copy.deepcopy(self.host.runtime_chains)
+        with self.assertRaises(security.SecurityError):
+            self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.runtime_chains, before)
+        self.assertTrue(state['access_recovered'])
+        self.assertEqual(state['cleanup'], 'pending')
+        self.assertIn('docker-firewall-runtime', state['diagnostics'])
+
+    def test_interrupted_helper_runtime_cleanup_resumes_each_family(self):
+        state = self.prepared()
+        before = copy.deepcopy(self.host.runtime_chains)
+        self.adapter.activate(state, self.persist)
+        def interrupt(args):
+            if args[0] == 'iptables-restore':
+                raise KeyboardInterrupt()
+        self.host.after_command = interrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.adapter.restore(state, self.persist)
+        self.host.after_command = None
+        self.assertEqual(self.host.runtime_chains['iptables'], before['iptables'])
+        self.assertNotEqual(self.host.runtime_chains['ip6tables'], before['ip6tables'])
+        resumed = copy.deepcopy(self.saved[-1])
+        self.adapter.restore(resumed, self.persist)
+        self.assertEqual(self.host.runtime_chains, before)
+        self.assertEqual(resumed['cleanup'], 'complete')
+        self.assertEqual(sum(args[0] == 'iptables-restore' for args in self.host.commands), 1)
+
+    def test_successful_restore_command_requires_runtime_postcondition(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        native = self.host.command
+        def no_change(args, check=True):
+            if args[0].endswith('tables-restore'):
+                return subprocess.CompletedProcess(args, 0, '', '')
+            return native(args, check)
+        with patch.object(self.host, 'command', side_effect=no_change):
+            with self.assertRaises(security.SecurityError):
+                self.adapter.restore(state, self.persist)
+        self.assertTrue(state['access_recovered'])
+        self.assertEqual(state['cleanup'], 'pending')
+
+    def test_runtime_drift_after_cleanup_persistence_is_not_overwritten(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        changed = []
+        def change_during_persist(value):
+            self.persist(value)
+            if value['helper_runtime'].get('restoring') == 'iptables' and not changed:
+                self.host.runtime_chains['iptables']['DOCKER-USER'].append('-A DOCKER-USER -j ACCEPT')
+                changed.append(True)
+        with self.assertRaises(security.SecurityError):
+            self.adapter.restore(state, change_during_persist)
+        self.assertEqual(self.host.runtime_chains['iptables']['DOCKER-USER'][-1], '-A DOCKER-USER -j ACCEPT')
+        self.assertTrue(state['access_recovered'])
+        self.assertFalse(any(args[0].endswith('tables-restore') for args in self.host.commands))
+
+    def test_runtime_drift_during_final_reload_prevents_false_complete_cleanup(self):
+        self.host.active = True
+        self.host.services['ufw'].update(ActiveState='active', UnitFileState='enabled')
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        def change_after_reload(args):
+            if args == ['ufw', 'reload']:
+                self.host.runtime_chains['iptables']['DOCKER-USER'].append('-A DOCKER-USER -j ACCEPT')
+        self.host.after_command = change_after_reload
+        with self.assertRaises(security.SecurityError):
+            self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.runtime_chains['iptables']['DOCKER-USER'][-1], '-A DOCKER-USER -j ACCEPT')
+        self.assertEqual(state['cleanup'], 'pending')
+        self.assertTrue(state['access_recovered'])
+
+    def test_legacy_runtime_snapshot_requires_reconciliation_but_recovers_access(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        del state['plan']['helper_runtime_before']
+        del state['helper_runtime']
+        before = copy.deepcopy(self.host.runtime_chains)
+        with self.assertRaises(security.SecurityError):
+            self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.runtime_chains, before)
+        self.assertTrue(state['access_recovered'])
+        self.assertEqual(state['cleanup'], 'pending')
+
+    def test_disabled_ipv6_runtime_is_preserved_during_helper_cleanup(self):
+        path = self.host.path('/etc/default/ufw')
+        path.write_text(path.read_text().replace('IPV6=yes', 'IPV6=no'))
+        self.host.conffiles['/etc/default/ufw'] = hashlib.md5(path.read_bytes()).hexdigest()
+        before = copy.deepcopy(self.host.runtime_chains)
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.runtime_chains, before)
+        self.assertFalse(any(args[0] == 'ip6tables-restore' for args in self.host.commands))
+
     def test_rollback_does_not_restart_preexisting_service_stopped_by_administrator(self):
         self.host.services['crowdsec'].update(ActiveState='active', UnitFileState='enabled')
         state = self.prepared()
@@ -328,10 +562,105 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(self.host.services['crowdsec']['ActiveState'], 'inactive')
         self.assertEqual(self.host.services['crowdsec']['UnitFileState'], 'disabled')
 
-    def test_conflicting_service_state_is_preserved_and_reported_pending(self):
+    def test_rollback_stops_owned_services_that_are_restarting_or_failed(self):
+        for activity in ('activating', 'deactivating', 'failed', 'reloading'):
+            with self.subTest(activity=activity):
+                self.host = SecurityHost(Path(self.temp.name) / activity)
+                self.adapter = security.Security(self.host)
+                state = self.prepared()
+                self.adapter.activate(state, self.persist)
+                self.host.services['crowdsec-firewall-bouncer']['ActiveState'] = activity
+                self.adapter.restore(state, self.persist)
+                self.assertEqual(self.host.services['crowdsec-firewall-bouncer']['ActiveState'], 'inactive')
+                self.assertEqual(state['cleanup'], 'complete')
+
+    def test_owned_inactive_service_stop_cancels_queued_start(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.host.services['crowdsec-firewall-bouncer']['ActiveState'] = 'inactive'
+        self.host.pending_starts.add('crowdsec-firewall-bouncer')
+        self.adapter.restore(state, self.persist)
+        self.assertFalse(self.host.pending_starts)
+        self.assertEqual(state['cleanup'], 'complete')
+
+    def test_failed_owned_stop_is_reset_and_verified_inactive(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        def failed_stop(args):
+            if args == ['systemctl', 'stop', 'crowdsec']:
+                self.host.services['crowdsec']['ActiveState'] = 'failed'
+        self.host.after_command = failed_stop
+        self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.services['crowdsec']['ActiveState'], 'inactive')
+        self.assertIn(['systemctl', 'reset-failed', 'crowdsec'], self.host.commands)
+        self.assertNotIn(['systemctl', 'reset-failed', 'crowdsec-firewall-bouncer'], self.host.commands)
+        self.assertEqual(state['cleanup'], 'complete')
+
+    def test_previously_restored_owned_service_is_rechecked_and_stopped_again(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.adapter.restore(state, self.persist)
+        self.host.services['crowdsec-firewall-bouncer']['ActiveState'] = 'activating'
+        self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.services['crowdsec-firewall-bouncer']['ActiveState'], 'inactive')
+        self.assertEqual(state['cleanup'], 'complete')
+
+    def test_late_owned_service_start_prevents_false_complete_cleanup(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        def late_start(args):
+            if args == ['ufw', 'disable']:
+                self.host.services['crowdsec-firewall-bouncer']['ActiveState'] = 'activating'
+        self.host.after_command = late_start
+        with self.assertRaises(security.SecurityError):
+            self.adapter.restore(state, self.persist)
+        self.assertEqual(state['cleanup'], 'pending')
+        self.assertTrue(state['access_recovered'])
+        self.host.after_command = None
+        self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.services['crowdsec-firewall-bouncer']['ActiveState'], 'inactive')
+        self.assertEqual(state['cleanup'], 'complete')
+
+    def test_failed_preexisting_service_is_not_stopped_or_reset(self):
+        self.host.services['crowdsec'].update(ActiveState='active', UnitFileState='enabled')
         state = self.prepared()
         self.adapter.activate(state, self.persist)
         self.host.services['crowdsec']['ActiveState'] = 'failed'
+        self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.services['crowdsec']['ActiveState'], 'failed')
+        self.assertNotIn(['systemctl', 'stop', 'crowdsec'], self.host.commands)
+        self.assertNotIn(['systemctl', 'reset-failed', 'crowdsec'], self.host.commands)
+
+    def test_failed_reset_does_not_claim_service_recovery(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        def remains_failed(args):
+            if args in (['systemctl', 'stop', 'crowdsec'], ['systemctl', 'reset-failed', 'crowdsec']):
+                self.host.services['crowdsec']['ActiveState'] = 'failed'
+        self.host.after_command = remains_failed
+        with self.assertRaises(security.SecurityError):
+            self.adapter.restore(state, self.persist)
+        self.assertEqual(state['cleanup'], 'pending')
+        self.assertTrue(state['access_recovered'])
+
+    def test_changed_previously_restored_service_unit_is_preserved(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.adapter.restore(state, self.persist)
+        self.host.services['crowdsec-firewall-bouncer'].update(
+            ActiveState='activating', DropInPaths='/etc/systemd/system/bouncer.service.d/custom.conf')
+        count = len(self.host.commands)
+        with self.assertRaises(security.SecurityError):
+            self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.services['crowdsec-firewall-bouncer']['ActiveState'], 'activating')
+        self.assertNotIn(['systemctl', 'stop', 'crowdsec-firewall-bouncer'], self.host.commands[count:])
+        self.assertTrue(state['access_recovered'])
+
+    def test_changed_service_unit_is_preserved_and_reported_pending(self):
+        state = self.prepared()
+        self.adapter.activate(state, self.persist)
+        self.host.services['crowdsec']['ActiveState'] = 'failed'
+        self.host.services['crowdsec']['DropInPaths'] = '/etc/systemd/system/crowdsec.service.d/administrator.conf'
         with self.assertRaises(security.SecurityError):
             self.adapter.restore(state, self.persist)
         self.assertEqual(self.host.services['crowdsec']['ActiveState'], 'failed')
@@ -438,9 +767,14 @@ class SecurityTests(unittest.TestCase):
         for name in ('after.rules', 'after6.rules'):
             path = self.host.path('/etc/ufw/' + name)
             path.write_text(path.read_text() + (HELPER_V6 if name == 'after6.rules' else HELPER_V4))
+        self.host.load_helper_runtime()
+        before = copy.deepcopy(self.host.runtime_chains)
         state = self.prepared()
         self.adapter.activate(state, self.persist)
         self.assertNotIn([security.HELPER, 'install'], self.host.commands)
+        self.adapter.restore(state, self.persist)
+        self.assertEqual(self.host.runtime_chains, before)
+        self.assertFalse(any(args[0].endswith('tables-restore') for args in self.host.commands))
 
     def test_helper_check_success_does_not_accept_permissive_marker_block(self):
         self.host.active = True

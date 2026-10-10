@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import tempfile
 import uuid
 
 from .access import atomic
@@ -66,8 +67,7 @@ class Security:
         for name, state in services.items():
             if (state.get('LoadState') != 'loaded' or state.get('UnitFileState') not in ('enabled', 'disabled')
                     or state.get('ActiveState') not in ('active', 'inactive')
-                    or state.get('DropInPaths') or state.get('FragmentPath') not in
-                    ('/usr/lib/systemd/system/' + name + '.service', '/lib/systemd/system/' + name + '.service')):
+                    or state.get('DropInPaths') or not self._supported_unit(name, state.get('FragmentPath'))):
                 raise SecurityError('Unsupported or masked security service: ' + name)
         if self._digest(self._path(HELPER).read_bytes()) != HELPER_SHA256:
             raise SecurityError('The ufw-docker helper does not match the pinned baseline')
@@ -94,15 +94,24 @@ class Security:
         present = any('UFW AND DOCKER' in text for text in texts)
         if present:
             self._check_helper_files()
+            runtime = None
         else:
-            for executable in ('iptables', 'ip6tables'):
-                result = self.host.command([executable, '-S', 'DOCKER-USER'], False)
-                if result.returncode == 0 and any(line not in ('-N DOCKER-USER', '-A DOCKER-USER -j RETURN')
-                                                for line in result.stdout.splitlines()):
-                    raise SecurityError('Unmanaged Docker firewall rules require reconciliation')
+            runtime = {executable: self._helper_runtime(executable) for executable in ('iptables', 'ip6tables')}
+            for chains in runtime.values():
+                self._validate_helper_before(chains)
         return {'version': 1, 'pristine': pristine, 'active': active, 'services': services,
-                'files': files, 'helper_present': present,
+                'files': files, 'helper_present': present, 'helper_runtime_before': runtime,
                 'ipv6': bool(re.search(r'^IPV6\s*=\s*[\"\x27]?yes', self._text('/etc/default/ufw'), re.M))}
+
+    def _supported_unit(self, name, path):
+        if path in ('/usr/lib/systemd/system/' + name + '.service', '/lib/systemd/system/' + name + '.service'):
+            return True
+        if name != 'crowdsec-firewall-bouncer' or path != '/etc/systemd/system/crowdsec-firewall-bouncer.service':
+            return False
+        output = self.host.command(['dpkg-query', '-W', '-f=${Conffiles}',
+                                    'crowdsec-firewall-bouncer-iptables']).stdout
+        conffiles = dict(re.findall(r'^\s*(/\S+)\s+([a-f0-9]{32})(?:\s|$)', output, re.M))
+        return hashlib.md5(self._path(path).read_bytes()).hexdigest() == conffiles.get(path)
 
     def _path(self, name):
         path = self.host.path(name)
@@ -161,7 +170,8 @@ class Security:
                 'client_address': address, 'token': uuid.uuid4().hex, 'rules': [],
                 'expected': {name: value['fingerprint'] for name, value in plan['files'].items()},
                 'service_changes': [], 'inflight': None, 'phase': 'prepared',
-                'access_recovered': False, 'cleanup': 'not-started', 'helper_blocks': {}}
+                'access_recovered': False, 'cleanup': 'not-started', 'helper_blocks': {},
+                'helper_runtime': {'introduced': False, 'restored': []}}
 
     def activate(self, state, persist):
         if state['phase'] != 'prepared' or state['inflight']:
@@ -176,7 +186,14 @@ class Security:
         if state['plan']['pristine']:
             for policy, direction in (('deny', 'incoming'), ('allow', 'outgoing'), ('allow', 'routed')):
                 self._mutate(state, ['ufw', 'default', policy, direction], ['/etc/default/ufw'], persist)
+        self._mutate(state, ['ufw', '--force', 'enable'],
+                     ['/etc/ufw/ufw.conf', '/etc/ufw/user.rules', '/etc/ufw/user6.rules'], persist)
         if not state['plan']['helper_present']:
+            if any(self._helper_runtime(executable) != before for executable, before in
+                   state['plan']['helper_runtime_before'].items()):
+                raise SecurityError('Docker firewall rules changed before helper installation')
+            state['helper_runtime']['introduced'] = True
+            persist(state)
             names = ['/etc/ufw/after.rules', '/etc/ufw/after6.rules']
             self._mutate(state, [HELPER, 'install'], names, persist)
             for name in names:
@@ -186,7 +203,6 @@ class Security:
                 state['helper_blocks'][name] = blocks[0]
             persist(state)
         self._check_helper_files()
-        self._mutate(state, ['ufw', '--force', 'enable'], ['/etc/ufw/ufw.conf'], persist)
         self._mutate(state, ['ufw', 'reload'], [], persist)
         self._enable(state, 'ufw', persist)
         self.host.command(['crowdsec', '-t', '-c', '/etc/crowdsec/config.yaml'])
@@ -251,6 +267,77 @@ class Security:
             if self.host.command([executable, '-C', 'FORWARD', '-j', 'DOCKER-USER'], False).returncode:
                 raise SecurityError('Docker forwarding hook is missing: ' + executable)
 
+    def _helper_runtime(self, executable):
+        logging = ('ufw6' if executable == 'ip6tables' else 'ufw') + '-docker-logging-deny'
+        chains = {'DOCKER-USER': None, logging: None}
+        for line in self.host.command([executable, '-S']).stdout.splitlines():
+            tokens = shlex.split(line)
+            if len(tokens) < 2 or tokens[1] not in chains:
+                continue
+            if tokens[0] == '-N' and len(tokens) == 2 and chains[tokens[1]] is None:
+                chains[tokens[1]] = [line]
+            elif tokens[0] == '-A' and chains[tokens[1]] is not None:
+                chains[tokens[1]].append(line)
+            else:
+                raise SecurityError('Unsupported Docker firewall chain declaration')
+        return chains
+
+    @staticmethod
+    def _validate_helper_before(chains):
+        if (not isinstance(chains, dict) or len(chains) != 2 or 'DOCKER-USER' not in chains
+                or chains['DOCKER-USER'] not in (None, ['-N DOCKER-USER'],
+                                                ['-N DOCKER-USER', '-A DOCKER-USER -j RETURN'])
+                or any(value is not None for name, value in chains.items() if name != 'DOCKER-USER')):
+            raise SecurityError('Unmanaged Docker firewall rules require reconciliation')
+
+    def _restore_helper_runtime(self, state, persist):
+        if state['plan']['helper_present']:
+            return
+        before = state['plan'].get('helper_runtime_before')
+        progress = state.get('helper_runtime')
+        if (not isinstance(before, dict) or set(before) != {'iptables', 'ip6tables'}
+                or not isinstance(progress, dict) or not isinstance(progress.get('introduced'), bool)
+                or not isinstance(progress.get('restored'), list)):
+            raise SecurityError('Missing Docker firewall recovery snapshot; reconcile explicitly')
+        for executable, original in before.items():
+            self._validate_helper_before(original)
+            current = self._helper_runtime(executable)
+            if set(original) != set(current):
+                raise SecurityError('Unsupported Docker firewall recovery snapshot')
+            if current != original:
+                ipv6 = executable == 'ip6tables'
+                expected = {name: ['-N ' + name] + [line for line in _helper_lines(ipv6)
+                            if line.startswith('-A ' + name + ' ')] for name in current}
+                try:
+                    owned = (progress['introduced'] and (not ipv6 or state['plan']['ipv6'])
+                             and all(current[name] is not None and
+                                     [_runtime_rule(line) for line in current[name]] ==
+                                     [_runtime_rule(line) for line in expected[name]] for name in current))
+                except (ValueError, SecurityError):
+                    owned = False
+                if not owned:
+                    raise SecurityError('Docker firewall runtime changed; preserve it for reconciliation')
+                logging = ('ufw6' if ipv6 else 'ufw') + '-docker-logging-deny'
+                commands = ['*filter', '-F DOCKER-USER', *(original['DOCKER-USER'] or [])[1:],
+                            '-F ' + logging, '-X ' + logging]
+                if original['DOCKER-USER'] is None:
+                    commands.append('-X DOCKER-USER')
+                commands.append('COMMIT')
+                progress['restoring'] = executable
+                persist(state)
+                with tempfile.NamedTemporaryFile(mode='w', prefix='apex-firewall-', suffix='.rules') as stream:
+                    stream.write('\n'.join(commands) + '\n')
+                    stream.flush()
+                    if self._helper_runtime(executable) != current:
+                        raise SecurityError('Docker firewall runtime changed immediately before restoration')
+                    self.host.command([executable + '-restore', '--wait', '10', '--noflush', stream.name])
+                if self._helper_runtime(executable) != original:
+                    raise SecurityError('Docker firewall restoration did not converge')
+            if executable not in progress['restored']:
+                progress['restored'].append(executable)
+            progress.pop('restoring', None)
+            persist(state)
+
     def restore(self, state, persist):
         state['cleanup'] = 'pending'
         state['access_recovered'] = False
@@ -258,19 +345,26 @@ class Security:
         errors = []
         for change in reversed(state['service_changes']):
             name, field = change['service'], change['field']
-            if change['status'] == 'restored':
-                continue
             if name == 'ufw' and field == 'ActiveState' and state['plan']['active']:
                 continue
             try:
                 current = self._service(name)
                 if any(current.get(key) != change['metadata'].get(key) for key in change['metadata']):
                     raise SecurityError('Service unit changed during activation')
-                if current[field] == change['after']:
+                owned_start = (field == 'ActiveState' and change['before'] == 'inactive'
+                               and change['after'] == 'active' and current[field] in
+                               ('active', 'inactive', 'activating', 'deactivating', 'failed', 'reloading'))
+                # Stop even when inactive: systemd may still have a queued start job.
+                if current[field] == change['after'] or owned_start:
                     actions = {'active': 'start', 'inactive': 'stop', 'enabled': 'enable', 'disabled': 'disable'}
                     change['status'] = 'restoring'
                     persist(state)
                     self.host.command(['systemctl', actions[change['before']], name])
+                    stopped = self._service(name)
+                    if any(stopped.get(key) != change['metadata'].get(key) for key in change['metadata']):
+                        raise SecurityError('Service unit changed during restoration')
+                    if owned_start and stopped[field] == 'failed':
+                        self.host.command(['systemctl', 'reset-failed', name])
                 elif current[field] != change['before']:
                     raise SecurityError('Service state changed outside this transition')
                 if self._service(name)[field] != change['before']:
@@ -337,6 +431,10 @@ class Security:
                 except Exception:
                     errors.append('rule-cleanup')
         try:
+            self._restore_helper_runtime(state, persist)
+        except Exception:
+            errors.append('docker-firewall-runtime')
+        try:
             if original_active:
                 if errors or pending:
                     self._retain_bootstrap(state, persist)
@@ -350,6 +448,24 @@ class Security:
             errors.append('bootstrap-firewall')
         if not state['access_recovered']:
             errors.append('bootstrap-firewall')
+        if not state['plan']['helper_present']:
+            try:
+                if any(self._helper_runtime(executable) != before for executable, before in
+                       state['plan']['helper_runtime_before'].items()):
+                    raise SecurityError('Docker firewall restoration changed before cleanup completed')
+            except Exception:
+                errors.append('docker-firewall-runtime')
+        for change in state['service_changes']:
+            name, field = change['service'], change['field']
+            if name == 'ufw' and field == 'ActiveState' and original_active:
+                continue
+            try:
+                current = self._service(name)
+                if (current[field] != change['before'] or any(current.get(key) != value
+                                                            for key, value in change['metadata'].items())):
+                    raise SecurityError('Service restoration changed before cleanup completed')
+            except Exception:
+                errors.append('service:' + name + ':' + field)
         if errors or pending:
             state['diagnostics'] = sorted(set(errors + ['file:' + name for name in ambiguous]
                                               + (['interrupted-mutation'] if state['inflight'] else [])))
@@ -446,7 +562,7 @@ class Security:
 
     @staticmethod
     def _rule_command(rule, delete=False):
-        command = ['ufw', '--force', 'delete'] if delete else (['ufw', 'insert', '1'] if rule['temporary'] else ['ufw'])
+        command = ['ufw', '--force', 'delete'] if delete else (['ufw', 'prepend'] if rule['temporary'] else ['ufw'])
         return command + ['allow', 'proto', 'tcp', 'from', rule['source'], 'to', 'any', 'port', str(rule['port']),
                           'comment', rule['comment']]
 

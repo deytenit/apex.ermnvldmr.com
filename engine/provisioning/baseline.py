@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import urllib.request
+import uuid
 
 
 class BaselineError(RuntimeError):
@@ -342,6 +344,77 @@ def ensure_service(name):
         run(["systemctl", "start", name])
 
 
+def repair_bouncer_credentials():
+    """Repair package placeholders without rewriting administrator YAML settings."""
+    config = Path("/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml")
+    identity = config.with_suffix(".yaml.id")
+    for path in (config, identity):
+        if any(parent.is_symlink() for parent in (path, *path.parents)):
+            raise BaselineError("Refusing redirected CrowdSec bouncer credential paths.")
+        if path.exists():
+            metadata = path.stat()
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or
+                    metadata.st_uid != os.geteuid()):
+                raise BaselineError("Refusing untrusted CrowdSec bouncer credential files.")
+    if not config.exists():
+        raise BaselineError("CrowdSec bouncer configuration is missing; reconcile the package installation.")
+    content = config.read_text()
+    entries = list(re.finditer(r"^(?:api_key|'api_key'|\"api_key\"):[^\r\n]*", content, re.MULTILINE))
+    if len(entries) != 1:
+        raise BaselineError("CrowdSec bouncer requires one explicit api_key; reconcile its configuration.")
+    entry = entries[0]
+    for following in content[entry.end():].splitlines():
+        if not following.strip() or following.lstrip().startswith("#"):
+            continue
+        if following[:1].isspace():
+            raise BaselineError("Multiline CrowdSec bouncer api_key requires explicit reconciliation.")
+        break
+    scalar = re.fullmatch(r"(?:api_key|'api_key'|\"api_key\"):[ \t]*(?P<value>\"[^\"]*\"|'[^']*'|[^ \t#'\"]*)(?:[ \t]+(?:#.*)?)?", entry.group())
+    if scalar is None:
+        raise BaselineError("Unsupported CrowdSec bouncer api_key; reconcile its configuration.")
+    value = scalar.group("value")
+    uninitialized = value in ("null", "Null", "NULL", "~")
+    if value[:1] in ("'", '"'):
+        value = value[1:-1]
+    if not uninitialized and value not in ("", "<API_KEY>", "$API_KEY", "${API_KEY}"):
+        return
+    metadata = config.stat()
+    registration = "cs-firewall-bouncer-apex-" + uuid.uuid4().hex
+    key = run(["cscli", "-oraw", "bouncers", "add", registration]).stdout.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_+/=-]{24,256}", key):
+        raise BaselineError("CrowdSec bouncer registration did not return a usable API key.")
+    start, end = scalar.span("value")
+    separator = " " if entry.group()[start - 1] == ":" else ""
+    updated = content[:entry.start() + start] + separator + key + content[entry.start() + end:]
+
+    def publish(path, payload, mode, owner):
+        fd, temporary = tempfile.mkstemp(prefix=".apex-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                os.fchown(stream.fileno(), *owner)
+                os.fchmod(stream.fileno(), mode)
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    # Publish the key last: interruption can orphan a registration, but retries
+    # replace the placeholder and its package bookkeeping together in this order.
+    owner = (metadata.st_uid, metadata.st_gid)
+    publish(identity, registration + "\n", 0o600, owner)
+    publish(config, updated, (stat.S_IMODE(metadata.st_mode) & 0o640) | 0o600, owner)
+    if config.read_text() != updated or identity.read_text().strip() != registration:
+        raise BaselineError("CrowdSec bouncer credential publication did not converge.")
+
+
 @expected_errors
 def apply_base_policy():
     """The bounded configure/base policy: no Docker, storage or enrollment."""
@@ -369,7 +442,9 @@ def apply_baseline():
     with service_start_guard(), security_service_guard(packages):
         install_missing((*BASE_PACKAGES, *ADMIN_PACKAGES))
         configure_sources()
+        install_missing(("crowdsec",))
         install_missing(packages)
+        repair_bouncer_credentials()
     configure_common()
     write_managed("/etc/docker/daemon.json", json.dumps(docker_config, indent=2) + "\n")
     Path("/srv/docker").mkdir(parents=True, exist_ok=True)
