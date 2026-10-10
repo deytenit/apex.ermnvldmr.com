@@ -6,7 +6,7 @@ from engine import overlay
 
 METADATA = Meta(summary="Run every configure/* action in stable order.",
                 args=[Flag("--dry-run", "Pass --dry-run to sub-actions that support it.")])
-ORDER = ["configure/base", "configure/ufw", "configure/crowdsec",
+ORDER = ["configure/base", "configure/timezone", "configure/ufw", "configure/crowdsec",
          "configure/cron", "configure/systemd", "configure/routing"]
 
 def run(ctx, args):
