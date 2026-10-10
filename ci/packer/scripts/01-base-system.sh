@@ -1,31 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-
-echo "=== [1/6] Configuring Base Packages ==="
-apt-get update
-apt-get install -y --no-install-recommends \
-  curl wget tcpdump socat rsync bind9-dnsutils iproute2 net-tools traceroute ca-certificates \
-  jq sed gawk tar gzip bzip2 xz-utils unzip htop iotop strace lsof sysstat \
-  parted fdisk pciutils usbutils smartmontools tmux vim less tree bash-completion \
-  git python3 python3-minimal sudo rsyslog cron qemu-guest-agent
-
-# Prevent apt from retaining downloaded archives on disk
-echo 'APT::Keep-Downloaded-Packages "0";' > /etc/apt/apt.conf.d/99-apex
-
-# Limit systemd journal disk usage
-mkdir -p /etc/systemd/journald.conf.d
-cat << 'EOF_JOURNAL' > /etc/systemd/journald.conf.d/99-apex.conf
-[Journal]
-SystemMaxUse=200M
-EOF_JOURNAL
-
-echo "=== [2/6] Configuring Sudo & Passwordless Escalation ==="
-cat << 'EOF_SUDO' > /etc/sudoers.d/99-apex
-%sudo ALL=(ALL:ALL) NOPASSWD: ALL
-EOF_SUDO
-chmod 0440 /etc/sudoers.d/99-apex
-visudo -cf /etc/sudoers.d/99-apex
+apt-get -o DPkg::Lock::Timeout=60 update
+apt-get -o DPkg::Lock::Timeout=60 install -y --no-upgrade --no-install-recommends qemu-guest-agent cloud-init
 
 echo "=== [3/6] Configuring VirtIO Kernel Modules ==="
 cat << 'EOF_VIRTIO' > /etc/modules-load.d/virtio.conf
@@ -46,11 +23,6 @@ fi
 update-grub
 
 mkdir -p /etc/systemd/system/serial-getty@ttyS0.service.d
-cat << 'EOF_GETTY' > /etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud 115200,38400,9600 %I $TERM
-EOF_GETTY
 systemctl enable serial-getty@ttyS0.service || true
 systemctl enable qemu-guest-agent 2>/dev/null || true
 

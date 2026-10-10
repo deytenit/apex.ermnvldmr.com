@@ -47,7 +47,7 @@ def main(argv) -> int:
         sys.stderr.write(f"[global] [core] [ERROR] Unknown action: {name}\n")
         return 1
 
-    node, warns = (resolve(socket.getfqdn(), repo_root) if is_node else (None, []))
+    node, warns = (resolve(socket.getfqdn(), repo_root) if is_node and name != 'init' else (None, []))
     ctx = Context(node, Paths(repo_root, commons_dir), name, shadowed=r.shadowed)
     for w in warns:
         ctx.log.warn(w)

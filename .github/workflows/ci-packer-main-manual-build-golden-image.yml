@@ -24,7 +24,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate Shell Script Syntax
-        run: bash -n ci/packer/scripts/*.sh
+        run: |
+          for script in ci/packer/scripts/*.sh engine/provisioning/seed.sh; do
+            bash -n "$script"
+          done
+          bash tests/run.sh
 
       - name: Setup Packer
         uses: hashicorp/setup-packer@main
@@ -67,7 +71,7 @@ jobs:
       - name: Build Debian 13 Image with Packer
         run: |
           packer init ci/packer/apex-debian-13.pkr.hcl
-          packer build -var "vm_name=${{ steps.vars.outputs.image_name }}" ci/packer/apex-debian-13.pkr.hcl
+          packer build -var "vm_name=${{ steps.vars.outputs.image_name }}" -var "provision_revision=${{ github.sha }}" ci/packer/apex-debian-13.pkr.hcl
 
       - name: Upload Image Artifact
         uses: actions/upload-artifact@v4

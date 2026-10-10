@@ -81,6 +81,54 @@ through the whole thing.
 - `git` and `python3` — standard library only, nothing to install.
 - A Debian-based host with Docker and `docker compose` v2.
 
+## Initialize a provider-installed server
+
+The SSH initializer targets clean Debian 13 amd64 machines and uses the same
+provisioning modules as Packer. Copy [the user-data template](ci/cloud-init/user-data.template.yaml),
+fill in the target identity, operator public key, and independent node repository, then run:
+
+```sh
+./apex init root@server --user-data /private/path/location.user-data.yaml
+```
+
+The workstation needs Python and OpenSSH. Target host trust follows your SSH
+configuration; private Git repositories also need a deploy key and trusted Git
+host keys in the supported user-data fields. User-data contains credentials and
+belongs outside tracked files. This is a strict APEX cloud-config subset, not a
+general cloud-init interpreter.
+
+Initialization prepares packages, the administrator, storage tiers, and a pinned
+repository checkout. It preserves provider networking and machine identity. A
+persistent watchdog protects the switch to key-only `adam` access on port 2222
+and activation of UFW, its Docker integration, CrowdSec, and the firewall bouncer.
+Fresh firewall defaults match the image baseline; existing custom policies require
+compatible configuration. Unsupported conditional SSH policies stop enrollment
+before baseline setup. Recovery preserves concurrent administrator edits and
+reports `recovery_pending` when cleanup needs reconciliation, keeping the watchdog
+armed while attempting to restore SSH independently.
+After that switch, retries use `adam@server --port 2222`; the command reports the
+safe resume invocation and root-owned stage records. Existing data and divergent
+checkouts are preserved and reported as conflicts. Initialization does not deploy
+applications or create database clusters.
+
+Supported node repositories declare `APEX_ENROLLMENT_INTERFACE=1` in `node.env`
+alongside their compatible `init.sh`. Missing or unsupported declarations stop
+enrollment before the checkout hook runs. Results record the provisioner and
+baseline revisions separately, plus the node and commons commits.
+
+The running Debian kernel must have matching headers available. If the provider
+installed an obsolete kernel, install a supported kernel and headers and reboot
+before enrollment; the initializer does not reboot the server automatically.
+
+Earlier isolated Debian 13 VM checks cover SSH enrollment, completed-run retries,
+watchdog recovery after disconnect and reboot, safe storage handling, and two
+independent Packer/cloud-init clones. The added security activation transaction
+still requires its Debian VM verification before production enrollment.
+Production enrollment also requires a
+published node repository with a compatible, available commons pin.
+The [composition replication RFC](docs/rfcs/composition-replication.md) defines how
+independent node repositories can host replicas of selected compositions.
+
 ## License
 
 BSD-2-Clause — see [`LICENSE`](LICENSE).

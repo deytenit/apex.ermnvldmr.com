@@ -27,6 +27,11 @@ variable "accelerator" {
   default = "kvm"
 }
 
+variable "provision_revision" {
+  type    = string
+  default = "working-tree"
+}
+
 source "qemu" "apex_debian" {
   iso_url          = var.debian_cloud_image_url
   iso_checksum     = var.debian_cloud_image_checksum
@@ -34,7 +39,7 @@ source "qemu" "apex_debian" {
   disk_size        = "10G"
   format           = "qcow2"
   output_directory = "output-qemu"
-  shutdown_command = "echo 'packer' | sudo -S shutdown -P now"
+  shutdown_command = "sudo -n shutdown -P now"
   accelerator      = var.accelerator
   cd_files         = ["ci/packer/cidata/user-data", "ci/packer/cidata/meta-data"]
   cd_label         = "cidata"
@@ -55,8 +60,22 @@ source "qemu" "apex_debian" {
 build {
   sources = ["source.qemu.apex_debian"]
 
+  provisioner "file" {
+    source      = "engine"
+    destination = "/tmp/"
+  }
+
   provisioner "shell" {
-    execute_command = "echo 'packer' | sudo -S sh -c '{{ .Vars }} {{ .Path }}'"
+    execute_command = "sudo -n sh -c '{{ .Vars }} {{ .Path }}'"
+    environment_vars = ["APEX_PROVISION_REVISION=${var.provision_revision}"]
+    inline = [
+      "bash /tmp/engine/provisioning/seed.sh",
+      "cd /tmp && python3 -m engine.provisioning.image install"
+    ]
+  }
+
+  provisioner "shell" {
+    execute_command = "sudo -n sh -c '{{ .Vars }} {{ .Path }}'"
     scripts = [
       "ci/packer/scripts/01-base-system.sh",
       "ci/packer/scripts/02-storage-docker.sh",
