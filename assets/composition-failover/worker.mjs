@@ -1,5 +1,5 @@
 const READY_HEADER = 'X-APEX-Ready-Token';
-const PROBE_TIMEOUT_MS = 2000;
+const PROBE_TIMEOUT_MS = 5000;
 
 function hostname(value) {
   if (typeof value !== 'string' || value.length > 253 || !value.includes('.')) return null;

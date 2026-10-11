@@ -24,7 +24,7 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
             raise ValueError('A canonical absolute readiness path is required')
         if not isinstance(command, list) or not command or not all(isinstance(arg, str) and '\0' not in arg for arg in command) or not os.path.isabs(command[0]):
             raise ValueError('A fixed absolute executable and argv are required')
-        if isinstance(timeout, bool) or not 0 < timeout <= 1.5 or isinstance(slots, bool) or not isinstance(slots, int) or not 1 <= slots <= 16:
+        if isinstance(timeout, bool) or not 0 < timeout <= 3 or isinstance(slots, bool) or not isinstance(slots, int) or not 1 <= slots <= 16:
             raise ValueError('Invalid probe bounds')
         if not isinstance(single_flight, bool):
             raise ValueError('single_flight must be a boolean')

@@ -75,7 +75,7 @@ test('unready primary cancels unread body and selects ready secondary', async (t
   assert.equal(calls[2].options.cf.resolveOverride, env.APEX_ORIGIN_SECONDARY);
 });
 
-test('probe deadline aborts at two seconds even if fetch ignores cancellation', async (t) => {
+test('probe deadline aborts at five seconds even if fetch ignores cancellation', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let finishPrimary;
   let canceled = false;
@@ -84,8 +84,9 @@ test('probe deadline aborts at two seconds even if fetch ignores cancellation', 
     : count === 2 ? ready() : new Response('secondary'));
   const pending = worker.fetch(new Request(url), env);
   await Promise.resolve();
-  t.mock.timers.tick(1999);
+  t.mock.timers.tick(4999);
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.signal.aborted, false);
   t.mock.timers.tick(1);
   const response = await pending;
   assert.equal(await response.text(), 'secondary');
@@ -227,16 +228,18 @@ test('failed readiness fetch selects secondary without exposing exception detail
   assert.equal(calls.length, 3);
 });
 
-test('secondary probe has its own two-second deadline and no client dispatch follows', async (t) => {
+test('secondary probe has its own five-second deadline and no client dispatch follows', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const calls = intercept(t, () => new Promise(() => {}));
   const pending = worker.fetch(new Request(url), env);
-  t.mock.timers.tick(2000);
+  t.mock.timers.tick(5000);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls.length, 2);
   assert.equal(calls[0].options.signal.aborted, true);
   assert.equal(calls[1].options.signal.aborted, false);
-  t.mock.timers.tick(2000);
+  t.mock.timers.tick(4999);
+  assert.equal(calls[1].options.signal.aborted, false);
+  t.mock.timers.tick(1);
   const response = await pending;
   assert.equal(response.status, 503);
   assert.equal(calls[1].options.signal.aborted, true);

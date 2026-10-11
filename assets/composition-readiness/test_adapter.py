@@ -17,6 +17,13 @@ class AdapterTests(unittest.TestCase):
   c.endheaders();r=c.getresponse();out=(r.status,r.getheader('Cache-Control'),r.read());c.close();return out
  def test_authenticated_success_runs_fixed_probe(self):
   self.assertEqual(self.request(self.server()),(204,'no-store',b''));self.assertTrue(self.marker.exists())
+ def test_configured_three_seconds_allows_a_probe_longer_than_default(self):
+  code=f"import time;from pathlib import Path;time.sleep(1.6);Path({str(self.marker)!r}).write_text('completed')"
+  s=self.server(code,timeout=3,single_flight=True)
+  self.assertEqual(self.request(s),(204,'no-store',b''));self.assertEqual(self.marker.read_text(),'completed')
+ def test_timeout_over_three_seconds_is_rejected_before_probe(self):
+  with self.assertRaises(ValueError):self.server(timeout=3.01)
+  self.assertFalse(self.marker.exists())
  def test_absent_wrong_and_duplicate_tokens_never_probe(self):
   s=self.server()
   for token,duplicate in [(None,False),('bad',False),('private-test-token',True)]:self.assertEqual(self.request(s,token=token,extra_token=duplicate)[0],403)
