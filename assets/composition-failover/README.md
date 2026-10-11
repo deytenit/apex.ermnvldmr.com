@@ -1,6 +1,6 @@
 # Readiness-gated origin routing on Workers Free
 
-This local ES-module Worker asset selects between two origins for one public HTTPS hostname. It implements the ingress part of the [composition replication RFC](../../docs/rfcs/composition-replication.md). It is not deployed and does not establish production high availability. Deploy one instance per public hostname, with independently verified origin routes and readiness. Activate only after the declared backend failure behavior and authenticated application readiness are verified. The Worker does not promote databases or activate a standby.
+This local ES-module Worker asset selects between two origins for one public HTTPS hostname. It implements the ingress part of the [composition replication RFC](../../docs/rfcs/composition-replication.md). It is not deployed and does not establish production high availability. Use the multi-host entrypoint below when hostnames share origins and a readiness secret. Verify origin routes and readiness independently for every hostname. Activate only after the declared backend failure behavior and authenticated application readiness are verified. The Worker does not promote databases or activate a standby.
 
 The module has no runtime dependencies, paid bindings, KV, R2, storage or scheduled jobs. This directory does not enable billing, enroll an account, upload a Worker or change DNS/routes.
 
@@ -86,3 +86,17 @@ node --test assets/composition-failover/worker.test.mjs
 ```
 
 Tested with Node v24.11.1 using its built-in test runner and Web APIs. Tests call the exported handler and replace only the external fetch boundary, with fake timers for probe deadlines. They do not call Cloudflare or use credentials. No npm install, new dependency or change to the default Python test workflow is required. Native Cloudflare deployment is deliberately outside this local test's proof.
+
+## Several hostnames in one Worker
+
+Use `multi-host.mjs` as the main module and upload `worker.mjs` alongside it when
+several hostnames share the same origins and readiness secret. Attach one Route
+per hostname to that single Worker. Set `APEX_PUBLIC_HOSTS` to a JSON object of
+allowed hostnames and exact health status strings, for example
+`{"sso.example.com":"204","app.example.com":"200"}`. It replaces the
+`APEX_PUBLIC_HOST` and `APEX_READY_STATUS` bindings; all other bindings and
+deployment gates above still apply. Unknown hostnames are rejected before any
+origin request. Each allowed hostname uses the existing single-host handler,
+including its authentication, caching, streaming and no-replay behavior.
+
+Verify both entrypoints with `node --test assets/composition-failover/*.test.mjs`.
