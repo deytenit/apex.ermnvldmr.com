@@ -18,7 +18,7 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
     allow_reuse_address = True
     request_queue_size = 64
 
-    def __init__(self, address, *, token, path, command, timeout=1.5, slots=4, single_flight=False):
+    def __init__(self, address, *, token, path, command, timeout=1.5, slots=4, single_flight=False, refresh_interval=0, max_age=5):
         if not isinstance(token, str) or not re.fullmatch(r'[!-~]{16,512}', token):
             raise ValueError('A private visible-ASCII token is required')
         if not isinstance(path, str) or not re.fullmatch(r'/[A-Za-z0-9._~/-]+', path) or any(part in ('', '.', '..') for part in path[1:].split('/')):
@@ -29,6 +29,10 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
             raise ValueError('Invalid probe bounds')
         if not isinstance(single_flight, bool):
             raise ValueError('single_flight must be a boolean')
+        if isinstance(refresh_interval, bool) or not isinstance(refresh_interval, (int, float)) or not 0 <= refresh_interval <= 5:
+            raise ValueError('Invalid refresh interval')
+        if isinstance(max_age, bool) or not isinstance(max_age, (int, float)) or not 0 < max_age <= 10 or (refresh_interval and max_age < refresh_interval + timeout):
+            raise ValueError('Invalid readiness freshness bound')
         self.token = token.encode('ascii')
         self.ready_path = path
         self.command = command
@@ -40,7 +44,15 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
         self.active = set()
         self.active_lock = threading.Lock()
         self.closing = False
+        self.refresh_interval = refresh_interval
+        self.max_age = max_age
+        self.snapshot = None
+        self.refresh_stop = threading.Event()
+        self.refresh_thread = None
         super().__init__(address, Handler)
+        if refresh_interval:
+            self.refresh_thread = threading.Thread(target=self.refresh, daemon=True)
+            self.refresh_thread.start()
 
     def get_request(self):
         connection, address = super().get_request()
@@ -80,6 +92,10 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
         process.wait()
 
     def probe(self):
+        if self.refresh_interval:
+            with self.active_lock:
+                return bool(not self.closing and self.snapshot and self.snapshot['ready']
+                            and 0 <= time.monotonic() - self.snapshot['started'] < self.max_age)
         if not self.single_flight:
             return self.run_probe()
         with self.active_lock:
@@ -103,6 +119,18 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
                 self.flight = None
                 flight['done'].set()
         return flight['ready']
+
+    def refresh(self):
+        while not self.refresh_stop.is_set():
+            started = time.monotonic()
+            try:
+                ready = self.run_probe(started + self.timeout)
+            except Exception:
+                ready = False
+            with self.active_lock:
+                self.snapshot = {'started': started, 'ready': ready and not self.closing and time.monotonic() < started + self.timeout}
+            if self.refresh_stop.wait(max(0, started + self.refresh_interval - time.monotonic())):
+                break
 
     def run_probe(self, deadline=None):
         if not self.probe_slots.acquire(blocking=False):
@@ -129,6 +157,7 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
             self.probe_slots.release()
 
     def server_close(self):
+        self.refresh_stop.set()
         with self.active_lock:
             self.closing = True
             if self.flight is not None:
@@ -137,6 +166,8 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
             active = list(self.active)
         for process in active:
             self.stop_probe(process)
+        if self.refresh_thread is not None:
+            self.refresh_thread.join(self.timeout + 1)
         super().server_close()
 
 

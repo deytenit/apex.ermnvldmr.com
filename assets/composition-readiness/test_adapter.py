@@ -143,4 +143,40 @@ class AdapterTests(unittest.TestCase):
  def test_single_flight_requires_explicit_boolean(self):
   for value in [0,1,None,'true']:
    with self.subTest(value=value),self.assertRaises(ValueError):self.server(single_flight=value)
+ def wait_status(self,s,status):
+  deadline=time.monotonic()+2
+  while time.monotonic()<deadline:
+   if self.request(s)[0]==status:return
+   time.sleep(.005)
+  self.fail(f'Readiness did not become {status}')
+ def test_background_probe_does_not_block_requests_or_repeat_per_request(self):
+  release=self.root/'release'
+  code=f"from pathlib import Path;import time;p=Path({str(self.marker)!r});p.write_text(p.read_text()+'x' if p.exists() else 'x');r=Path({str(release)!r});\nwhile not r.exists():time.sleep(.005)"
+  s=self.server(code,timeout=1,refresh_interval=2,max_age=3)
+  start=time.monotonic();self.assertEqual(self.request(s)[0],503);self.assertLess(time.monotonic()-start,.2)
+  release.touch();self.wait_status(s,204)
+  for _ in range(10):self.assertEqual(self.request(s),(204,'no-store',b''))
+  self.assertEqual(self.marker.read_text(),'x')
+  for token in [None,'bad']:self.assertEqual(self.request(s,token=token)[0],403)
+ def test_background_failure_withdraws_success_and_recovers(self):
+  healthy=self.root/'healthy';healthy.touch()
+  code=f"from pathlib import Path;raise SystemExit(0 if Path({str(healthy)!r}).exists() else 1)"
+  s=self.server(code,timeout=.2,refresh_interval=.1,max_age=.5)
+  self.wait_status(s,204);healthy.unlink();self.wait_status(s,503)
+  healthy.touch();self.wait_status(s,204)
+ def test_background_stopped_refresher_expires_success(self):
+  s=self.server('pass',timeout=.1,refresh_interval=.1,max_age=.25)
+  self.wait_status(s,204);s.refresh_stop.set();s.refresh_thread.join(1)
+  self.wait_status(s,503)
+ def test_background_shutdown_kills_probe_and_descendant(self):
+  leaked=self.root/'leaked'
+  child=f"import pathlib,time;pathlib.Path({str(self.marker)!r}).touch();time.sleep(.7);pathlib.Path({str(leaked)!r}).touch()"
+  s=self.server(f"import subprocess,sys,time;subprocess.Popen([sys.executable,'-c',{child!r}]);time.sleep(5)",timeout=1,refresh_interval=.1,max_age=2)
+  deadline=time.monotonic()+1
+  while not self.marker.exists() and time.monotonic()<deadline:time.sleep(.005)
+  self.assertTrue(self.marker.exists());s.server_close()
+  self.assertFalse(s.probe());self.assertFalse(s.refresh_thread.is_alive());time.sleep(.8);self.assertFalse(leaked.exists())
+ def test_background_configuration_rejects_unbounded_or_short_freshness(self):
+  for options in [{'refresh_interval':True},{'refresh_interval':-1},{'refresh_interval':6},{'refresh_interval':float('nan')},{'max_age':11},{'max_age':True},{'max_age':float('inf')},{'refresh_interval':1,'max_age':1}]:
+   with self.subTest(options=options),self.assertRaises(ValueError):self.server(**options)
 if __name__=='__main__':unittest.main()
