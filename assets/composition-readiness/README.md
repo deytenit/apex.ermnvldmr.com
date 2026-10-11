@@ -1,0 +1,27 @@
+# Authenticated composition readiness adapter
+
+This dependency-free Python adapter exposes one local HTTP endpoint for the readiness-gated Worker and origin proxy. It runs an operator-supplied executable for every authenticated probe; exit0 means ready, every other outcome means unavailable. The executable must establish the application's actual readiness contract. A successful TCP connection or container health flag is not enough for replicated SSO.
+
+Example private configuration:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 9092,
+  "path": "/.well-known/apex-ready",
+  "token_file": "/private/readiness-token",
+  "command": ["/usr/local/bin/python3", "/assets/probe.py", "--config", "/private/probe.json"],
+  "timeout": 1.5,
+  "slots": 4
+}
+```
+
+Run `python3 adapter.py --config /private/adapter.json` inside the application frontend namespace. Keep the token and probe credentials private. A64-character lowercase hexadecimal random token is suitable. This adapter does not need issuer private keys, a Docker socket, root, writable application data or network-administration capabilities. Bind only to loopback; route authorized origin readiness through a separately validated local proxy.
+
+Only GET at the exact canonical path, with one matching `X-APEX-Ready-Token` header, can execute the fixed command. Missing/wrong/duplicate credentials return403; other paths404; supported non-GET methods405. Ready returns204; probe failure, timeout or concurrency exhaustion returns503. These responses have empty bodies and `Cache-Control: no-store`. The adapter does not log requests, tokens or command output, cache success, or accept a client-supplied command. Each connection closes after its response.
+
+Probe timeout is bounded to1.5seconds so an origin can answer within the Worker's two-second deadline. A timeout kills the probe's process group. Probe slots and request threads are bounded; slow socket operations time out after two seconds. Operators must account for proxy overhead and actual probe execution time. Probe programs must not detach into a new session or launch background jobs.
+
+The SSO probe must verify the local Authelia instance/config generation, local authenticated SQL and directory access, completed migration, SQL Primary/Synced/write authority, and fresh session-controller authority plus actual verified TLS application access to its selected primary. It must reject uncertain/stale state and avoid inventing a competing election. A short-lived controller status file alone is not a consensus lease. The generic adapter supplies none of those application checks; do not deploy a placeholder-success probe or claim these tests establish HA.
+
+Run `python3 test_adapter.py` for loopback HTTP and subprocess behavior checks. No third-party packages are required. Production native image/probe/proxy integration and location-loss tests remain separate acceptance gates.
