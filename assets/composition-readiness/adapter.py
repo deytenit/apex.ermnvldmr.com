@@ -16,6 +16,7 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     block_on_close = False
     allow_reuse_address = True
+    request_queue_size = 64
 
     def __init__(self, address, *, token, path, command, timeout=1.5, slots=4, single_flight=False):
         if not isinstance(token, str) or not re.fullmatch(r'[!-~]{16,512}', token):

@@ -62,6 +62,26 @@ class AdapterTests(unittest.TestCase):
   def one():
    barrier.wait(timeout=2);start=time.monotonic();result=self.request(s);return result,time.monotonic()-start
   with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:return list(pool.map(lambda _:one(),range(count)))
+ def test_browser_asset_burst_connects_and_shares_one_slow_probe(self):
+  code=f"import pathlib,time;p=pathlib.Path({str(self.marker)!r});f=p.open('a');f.write('probe\\n');f.close();time.sleep(.8)"
+  s=self.server(code,timeout=3,slots=16,single_flight=True)
+  process_request=s.process_request
+  def delayed_accept(request,address):
+   time.sleep(.01)
+   process_request(request,address)
+  s.process_request=delayed_accept
+  barrier=threading.Barrier(32)
+  def one(_):
+   barrier.wait(timeout=2)
+   c=http.client.HTTPConnection(*s.server_address,timeout=.5)
+   try:
+    c.connect();c.sock.settimeout(3)
+    c.request('GET','/.well-known/apex-ready',headers={'X-APEX-Ready-Token':'private-test-token'})
+    r=c.getresponse();return r.status,r.read()
+   finally:c.close()
+  with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:results=list(pool.map(one,range(32)))
+  self.assertEqual(results,[(204,b'')]*32)
+  self.assertEqual(self.marker.read_text().splitlines(),['probe'])
  def test_single_flight_shares_success_and_sequential_request_reprobes(self):
   code=f"import pathlib,time;p=pathlib.Path({str(self.marker)!r});f=p.open('a');f.write('probe\\n');f.close();time.sleep(.2)"
   s=self.server(code,timeout=1,slots=1,single_flight=True)
