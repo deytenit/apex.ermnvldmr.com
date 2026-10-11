@@ -1,6 +1,6 @@
 # Authenticated composition readiness adapter
 
-This dependency-free Python adapter exposes one local HTTP endpoint for the readiness-gated Worker and origin proxy. It runs an operator-supplied executable for every authenticated probe; exit0 means ready, every other outcome means unavailable. The executable must establish the application's actual readiness contract. A successful TCP connection or container health flag is not enough for replicated SSO.
+This dependency-free Python adapter exposes one local HTTP endpoint for the readiness-gated Worker and origin proxy. By default it runs an operator-supplied executable for every authenticated probe; exit0 means ready, every other outcome means unavailable. The executable must establish the application's actual readiness contract. A successful TCP connection or container health flag is not enough for replicated SSO.
 
 Example private configuration:
 
@@ -12,7 +12,8 @@ Example private configuration:
   "token_file": "/private/readiness-token",
   "command": ["/usr/local/bin/python3", "/assets/probe.py", "--config", "/private/probe.json"],
   "timeout": 1.5,
-  "slots": 4
+  "slots": 4,
+  "single_flight": false
 }
 ```
 
@@ -22,6 +23,8 @@ Only GET at the exact canonical path, with one matching `X-APEX-Ready-Token` hea
 
 Probe timeout is bounded to1.5seconds so an origin can answer within the Worker's two-second deadline. A timeout kills the probe's process group. Probe slots and request threads are bounded; slow socket operations time out after two seconds. Operators must account for proxy overhead and actual probe execution time. Probe programs must not detach into a new session or launch background jobs.
 
-The SSO probe must verify the local Authelia instance/config generation, local authenticated SQL and directory access, completed migration, SQL Primary/Synced/write authority, and fresh session-controller authority plus actual verified TLS application access to its selected primary. It must reject uncertain/stale state and avoid inventing a competing election. A short-lived controller status file alone is not a consensus lease. The generic adapter supplies none of those application checks; do not deploy a placeholder-success probe or claim these tests establish HA.
+Optional `single_flight: true` lets overlapping authenticated requests share one running fixed-command probe. It accepts only a JSON boolean and defaults to false. Waiters use that probe's remaining monotonic deadline; they never queue another probe for the same request. The existing connection limit (`slots * 2 + 4`) also bounds waiting requests. Timeout or shutdown returns unavailable and terminates the probe group. Completed results are not cached: each subsequent request starts a fresh probe, with no success TTL or failure cache. Coalescing reduces concurrent work but does not make a slow individual probe meet its deadline.
+
+For the controlled active/standby SSO pattern, the probe must reject a node not explicitly configured as active, verify completed migration and unchanged Authelia configuration, and check local Authelia health, authenticated SQL access/schema with read_only disabled, directory access, and an authenticated session write/read/delete over verified TLS. All dependencies belong to the selected local identity instance. These checks do not establish exclusive primary ownership: the operator must fence the previous writer before promotion, and the standby application and ingress stay disabled. No quorum, Sentinel, or session-controller authority is required by this pattern. The generic adapter supplies none of those application checks; do not deploy a placeholder-success probe or claim these tests establish HA.
 
 Run `python3 test_adapter.py` for loopback HTTP and subprocess behavior checks. No third-party packages are required. Production native image/probe/proxy integration and location-loss tests remain separate acceptance gates.

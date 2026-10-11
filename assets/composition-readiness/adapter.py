@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import threading
+import time
 
 
 class ReadinessServer(http.server.ThreadingHTTPServer):
@@ -16,7 +17,7 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
     block_on_close = False
     allow_reuse_address = True
 
-    def __init__(self, address, *, token, path, command, timeout=1.5, slots=4):
+    def __init__(self, address, *, token, path, command, timeout=1.5, slots=4, single_flight=False):
         if not isinstance(token, str) or not re.fullmatch(r'[!-~]{16,512}', token):
             raise ValueError('A private visible-ASCII token is required')
         if not isinstance(path, str) or not re.fullmatch(r'/[A-Za-z0-9._~/-]+', path) or any(part in ('', '.', '..') for part in path[1:].split('/')):
@@ -25,10 +26,14 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
             raise ValueError('A fixed absolute executable and argv are required')
         if isinstance(timeout, bool) or not 0 < timeout <= 1.5 or isinstance(slots, bool) or not isinstance(slots, int) or not 1 <= slots <= 16:
             raise ValueError('Invalid probe bounds')
+        if not isinstance(single_flight, bool):
+            raise ValueError('single_flight must be a boolean')
         self.token = token.encode('ascii')
         self.ready_path = path
         self.command = command
         self.timeout = timeout
+        self.single_flight = single_flight
+        self.flight = None
         self.probe_slots = threading.BoundedSemaphore(slots)
         self.connection_slots = threading.BoundedSemaphore(slots * 2 + 4)
         self.active = set()
@@ -74,6 +79,31 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
         process.wait()
 
     def probe(self):
+        if not self.single_flight:
+            return self.run_probe()
+        with self.active_lock:
+            if self.closing:
+                return False
+            flight = self.flight
+            leader = flight is None
+            if leader:
+                flight = {'deadline': time.monotonic() + self.timeout, 'done': threading.Event(), 'ready': False}
+                self.flight = flight
+        if not leader:
+            flight['done'].wait(max(0, flight['deadline'] - time.monotonic()))
+            with self.active_lock:
+                return flight['ready'] and not self.closing and time.monotonic() < flight['deadline']
+        ready = False
+        try:
+            ready = self.run_probe(flight['deadline'])
+        finally:
+            with self.active_lock:
+                flight['ready'] = ready and not self.closing and time.monotonic() < flight['deadline']
+                self.flight = None
+                flight['done'].set()
+        return flight['ready']
+
+    def run_probe(self, deadline=None):
         if not self.probe_slots.acquire(blocking=False):
             return False
         process = None
@@ -84,7 +114,8 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
                 process = subprocess.Popen(self.command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
                 self.active.add(process)
             try:
-                return process.wait(timeout=self.timeout) == 0
+                timeout = self.timeout if deadline is None else max(0, deadline - time.monotonic())
+                return process.wait(timeout=timeout) == 0
             except subprocess.TimeoutExpired:
                 self.stop_probe(process)
                 return False
@@ -99,6 +130,9 @@ class ReadinessServer(http.server.ThreadingHTTPServer):
     def server_close(self):
         with self.active_lock:
             self.closing = True
+            if self.flight is not None:
+                self.flight['ready'] = False
+                self.flight['done'].set()
             active = list(self.active)
         for process in active:
             self.stop_probe(process)

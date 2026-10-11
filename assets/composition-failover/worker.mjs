@@ -23,7 +23,9 @@ function configuration(env) {
       || path.includes('//') || path.split('/').some((part) => part === '.' || part === '..')) return null;
   const token = env.APEX_READY_TOKEN;
   if (typeof token !== 'string' || !/^[\x21-\x7e]+$/.test(token)) return null;
-  return { publicHost, primary, secondary, path, token };
+  const status = env.APEX_READY_STATUS === undefined ? '204' : env.APEX_READY_STATUS;
+  if (!['200', '204'].includes(status)) return null;
+  return { publicHost, primary, secondary, path, token, status: Number(status) };
 }
 
 function unavailable(status = 503, message = 'Service unavailable') {
@@ -60,7 +62,7 @@ async function ready(config, origin) {
     });
     const inspection = fetch(probe, { ...options(origin), signal: controller.signal })
       .then((response) => {
-        const accepted = !controller.signal.aborted && response.status === 204;
+        const accepted = !controller.signal.aborted && response.status === config.status;
         discard(response);
         return accepted;
       }, () => false);

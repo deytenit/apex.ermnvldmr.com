@@ -114,6 +114,23 @@ test('readiness redirect is never accepted or followed', async (t) => {
   assert.equal(calls[0].options.redirect, 'manual');
 });
 
+test('application health can explicitly require 200 while 204 remains the default', async (t) => {
+  const bindings = { ...env, APEX_READY_STATUS: '200' };
+  const calls = intercept(t, (_, __, count) => count === 1
+    ? new Response(null, { status: 204 })
+    : count === 2 ? new Response('Healthy', { status: 200 }) : new Response('secondary'));
+  const response = await worker.fetch(new Request(url), bindings);
+  assert.equal(await response.text(), 'secondary');
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].options.cf.resolveOverride, env.APEX_ORIGIN_SECONDARY);
+});
+
+test('an unconfigured 200 health response cannot release application traffic', async (t) => {
+  const calls = intercept(t, () => new Response('login page', { status: 200 }));
+  assert.equal((await worker.fetch(new Request(url), env)).status, 503);
+  assert.equal(calls.length, 2);
+});
+
 for (const method of ['GET', 'POST']) {
   test(`failed ${method} dispatch is never replayed on another origin`, async (t) => {
     const calls = intercept(t, (_, __, count) => {
@@ -174,6 +191,9 @@ test('missing and invalid bindings fail closed without diagnostics or probes', a
     ['APEX_READY_PATH', '//evil.example/'], ['APEX_READY_PATH', '/ready?query=yes'],
     ['APEX_READY_PATH', '/ready#fragment'], ['APEX_READY_PATH', '/a/../ready'],
     ['APEX_READY_PATH', '/%72eady'], ['APEX_READY_TOKEN', 'secret\r\ninjected: yes'],
+    ['APEX_READY_STATUS', '302'], ['APEX_READY_STATUS', '401'],
+    ['APEX_READY_STATUS', '503'], ['APEX_READY_STATUS', '2xx'],
+    ['APEX_READY_STATUS', ''], ['APEX_READY_STATUS', 200], ['APEX_READY_STATUS', null],
   ]) invalid.push({ ...env, [name]: value });
   invalid.push(null);
   for (const bindings of invalid) {

@@ -6,9 +6,9 @@ class AdapterTests(unittest.TestCase):
  def tearDown(self):
   for s,t in self.servers:s.shutdown();s.server_close();t.join()
   self.tmp.cleanup()
- def server(self,code=None,timeout=.3,slots=2):
+ def server(self,code=None,timeout=.3,slots=2,**options):
   code=code or f"from pathlib import Path;Path({str(self.marker)!r}).write_text('yes')"
-  server=ReadinessServer(('127.0.0.1',0),token='private-test-token',path='/.well-known/apex-ready',command=[sys.executable,'-c',code],timeout=timeout,slots=slots)
+  server=ReadinessServer(('127.0.0.1',0),token='private-test-token',path='/.well-known/apex-ready',command=[sys.executable,'-c',code],timeout=timeout,slots=slots,**options)
   t=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':.01},daemon=True);t.start();self.servers.append((server,t));return server
  def request(self,s,path='/.well-known/apex-ready',token='private-test-token',method='GET',extra_token=False):
   c=http.client.HTTPConnection(*s.server_address,timeout=3);c.putrequest(method,path)
@@ -50,4 +50,70 @@ class AdapterTests(unittest.TestCase):
   self.assertFalse(self.marker.exists())
  def test_no_cached_readiness(self):
   s=self.server();self.assertEqual(self.request(s)[0],204);s.command=[sys.executable,'-c','raise SystemExit(1)'];self.assertEqual(self.request(s)[0],503)
+ def overlapping_requests(self,s,count=4):
+  barrier=threading.Barrier(count)
+  def one():
+   barrier.wait(timeout=2);start=time.monotonic();result=self.request(s);return result,time.monotonic()-start
+  with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:return list(pool.map(lambda _:one(),range(count)))
+ def test_single_flight_shares_success_and_sequential_request_reprobes(self):
+  code=f"import pathlib,time;p=pathlib.Path({str(self.marker)!r});f=p.open('a');f.write('probe\\n');f.close();time.sleep(.2)"
+  s=self.server(code,timeout=1,slots=1,single_flight=True)
+  results=self.overlapping_requests(s)
+  self.assertEqual([r for r,_ in results],[(204,'no-store',b'')]*4)
+  self.assertEqual(self.marker.read_text().splitlines(),['probe'])
+  self.assertEqual(self.request(s)[0],204)
+  self.assertEqual(self.marker.read_text().splitlines(),['probe','probe'])
+ def test_single_flight_shares_failure_without_caching_it(self):
+  code=f"import pathlib,time;p=pathlib.Path({str(self.marker)!r});f=p.open('a');f.write('probe\\n');f.close();time.sleep(.2);raise SystemExit(1)"
+  s=self.server(code,timeout=1,slots=4,single_flight=True)
+  self.assertEqual([r for r,_ in self.overlapping_requests(s)],[(503,'no-store',b'')]*4)
+  self.assertEqual(self.marker.read_text().splitlines(),['probe'])
+  s.command=[sys.executable,'-c','pass'];self.assertEqual(self.request(s)[0],204)
+ def test_single_flight_timeout_wakes_waiters_and_kills_descendant(self):
+  code=f"import subprocess,time,sys;subprocess.Popen([sys.executable,'-c',\"import time,pathlib;time.sleep(.8);pathlib.Path({str(self.marker)!r}).write_text('leaked')\"]);time.sleep(3)"
+  s=self.server(code,timeout=.25,slots=1,single_flight=True)
+  results=self.overlapping_requests(s)
+  self.assertEqual([r for r,_ in results],[(503,'no-store',b'')]*4)
+  self.assertTrue(all(.15<elapsed<.7 for _,elapsed in results),results)
+  time.sleep(.9);self.assertFalse(self.marker.exists())
+ def test_single_flight_shutdown_wakes_waiters_and_rejects_new_requests(self):
+  leaked=self.root/'descendant'
+  child=f"import time,pathlib;pathlib.Path({str(self.marker)!r}).write_text('started');time.sleep(.8);pathlib.Path({str(leaked)!r}).write_text('leaked')"
+  code=f"import subprocess,time,sys;subprocess.Popen([sys.executable,'-c',{child!r}]);time.sleep(3)"
+  s=self.server(code,timeout=1.5,slots=1,single_flight=True)
+  with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+   futures=[pool.submit(self.request,s) for _ in range(4)]
+   for _ in range(100):
+    if self.marker.exists():break
+    time.sleep(.005)
+   self.assertTrue(self.marker.exists());start=time.monotonic();s.server_close()
+   self.assertEqual([f.result()[0] for f in futures],[503]*4);self.assertLess(time.monotonic()-start,.7)
+  self.assertFalse(s.probe());time.sleep(.9);self.assertFalse(leaked.exists())
+ def test_single_flight_late_waiter_uses_remaining_deadline(self):
+  code=f"import pathlib,time;p=pathlib.Path({str(self.marker)!r});f=p.open('a');f.write('probe\\n');f.close();time.sleep(3)"
+  s=self.server(code,timeout=.4,slots=1,single_flight=True)
+  with concurrent.futures.ThreadPoolExecutor() as pool:
+   first=pool.submit(self.request,s)
+   for _ in range(100):
+    if self.marker.exists():break
+    time.sleep(.005)
+   self.assertTrue(self.marker.exists());time.sleep(.2);start=time.monotonic()
+   self.assertEqual(self.request(s)[0],503);self.assertLess(time.monotonic()-start,.3)
+   self.assertEqual(first.result()[0],503)
+  self.assertEqual(self.marker.read_text().splitlines(),['probe'])
+ def test_single_flight_connection_limit_remains_bounded(self):
+  s=self.server(slots=1,single_flight=True);connections=[]
+  try:
+   for _ in range(6):
+    sock=socket.create_connection(s.server_address,timeout=2);sock.sendall(b'GET /.well-known/apex-ready HTTP/1.1\r\n');connections.append(sock)
+   self.assertEqual(self.request(s),(503,'no-store',b''));self.assertFalse(self.marker.exists())
+  finally:
+   for sock in connections:sock.close()
+ def test_single_flight_still_authenticates_before_probe(self):
+  s=self.server(single_flight=True)
+  for token,duplicate in [(None,False),('bad',False),('private-test-token',True)]:self.assertEqual(self.request(s,token=token,extra_token=duplicate)[0],403)
+  self.assertFalse(self.marker.exists())
+ def test_single_flight_requires_explicit_boolean(self):
+  for value in [0,1,None,'true']:
+   with self.subTest(value=value),self.assertRaises(ValueError):self.server(single_flight=value)
 if __name__=='__main__':unittest.main()

@@ -1,6 +1,6 @@
 # Readiness-gated origin routing on Workers Free
 
-This local ES-module Worker asset selects between two origins for one public HTTPS hostname. It implements the ingress part of the [composition replication RFC](../../docs/rfcs/composition-replication.md). It is not deployed and does not establish production high availability. Activate it only after backend HA and authenticated application readiness are verified.
+This local ES-module Worker asset selects between two origins for one public HTTPS hostname. It implements the ingress part of the [composition replication RFC](../../docs/rfcs/composition-replication.md). It is not deployed and does not establish production high availability. Deploy one instance per public hostname, with independently verified origin routes and readiness. Activate only after the declared backend failure behavior and authenticated application readiness are verified. The Worker does not promote databases or activate a standby.
 
 The module has no runtime dependencies, paid bindings, KV, R2, storage or scheduled jobs. This directory does not enable billing, enroll an account, upload a Worker or change DNS/routes.
 
@@ -16,6 +16,7 @@ Set these string bindings through the operator's chosen Cloudflare deployment pr
 | `APEX_ORIGIN_SECONDARY` | Dedicated DNS-only secondary origin hostname in that zone |
 | `APEX_READY_PATH` | Dedicated absolute readiness path, for example `/.well-known/apex-ready` |
 | `APEX_READY_TOKEN` | High-entropy secret shared only by this Worker and both readiness adapters |
+| `APEX_READY_STATUS` | Optional exact status string: `204` (default) or `200` for a dedicated application health route |
 
 Hostnames accept ordinary ASCII DNS labels, without a scheme, port, trailing dot, wildcard or IP literal. Case is normalized. Public and origin hostnames must be distinct and within the declared zone. Readiness paths accept ASCII letters, digits, `.`, `_`, `~`, `-` and `/`; queries, fragments, escapes, repeated slashes and dot traversal segments are rejected. The secret must be nonempty visible ASCII without whitespace. Invalid/missing bindings produce a generic no-store 503 before any fetch. Syntax validation cannot establish actual DNS ownership or prevent an operator from naming a separately delegated zone; deployment must verify both origins are in the actual same Cloudflare zone.
 
@@ -42,9 +43,9 @@ The required non-secret upload metadata fields are:
 
 Use this as the multipart API `metadata` portion, with the ES-module file part named `worker.mjs`. Bindings and the readiness secret are configured separately through the operator-owned enrollment process; they are deliberately absent from this example, as are paid bindings. This metadata is not a complete enrollment or route activation command. Verify the resulting effective settings before activation, including after later uploads. [Multipart upload metadata](https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/)
 
-Every accepted HTTPS request first probes the primary with a GET at `https://APEX_PUBLIC_HOST/APEX_READY_PATH`. The request carries only `X-APEX-Ready-Token`, rather than client cookies or authorization. `cf.resolveOverride` selects the DNS-only origin while the URL remains the public hostname. Only status 204 is ready; redirects are manual and never accepted. Each probe has a two-second deadline. Unread response bodies are canceled, including responses arriving after timeout. Failed primary readiness leads to a secondary probe; neither ready produces a no-store 503. There is no readiness cache or background health state.
+Every accepted HTTPS request first probes the primary with a GET at `https://APEX_PUBLIC_HOST/APEX_READY_PATH`. The request carries only `X-APEX-Ready-Token`, rather than client cookies or authorization. `cf.resolveOverride` selects the DNS-only origin while the URL remains the public hostname. Only the configured exact status is ready: 204 by default, or 200 when explicitly selected with `APEX_READY_STATUS`. Redirects are manual and never accepted. Do not use 200 with a generic login page or native liveness endpoint; a protected application health route must verify both active SSO dependencies and its own backend. Each probe has a two-second deadline. Unread response bodies are canceled, including responses arriving after timeout. Failed primary readiness leads to a secondary probe; neither ready produces a no-store 503. There is no readiness cache or background health state.
 
-The dedicated origin adapter must authenticate the token, reject its absence/incorrect value and prove that this application instance can safely serve traffic: required dependencies, compatible configuration, current write authority/quorum, session state and any application-specific prerequisites. Authelia `/api/health`, an nginx 204, a TCP check or a running container alone is insufficient. Protect adapter aliases and normalize paths consistently at the origin. The Worker rejects public requests to the configured readiness path (also with a query or percent-encoded spelling), and removes every client-supplied readiness header before application dispatch. This asset does not implement or enroll the backend adapter.
+The dedicated origin adapter must authenticate the token, reject its absence/incorrect value and prove that this application instance can safely serve traffic: required dependencies, compatible configuration, current write authority for the declared topology, session state and any application-specific prerequisites. Authelia `/api/health`, an nginx 204, a TCP check or a running container alone is insufficient. Protect adapter aliases and normalize paths consistently at the origin. The Worker rejects public requests to the configured readiness path (also with a query or percent-encoded spelling), and removes every client-supplied readiness header before application dispatch. An unpromoted standby must remain unready. This asset does not implement or enroll the backend adapter. Preserve existing path-specific routes when attaching the Worker; two ingress paths do not replicate a shared application backend.
 
 Cloudflare documents `resolveOverride` as DNS substitution while retaining the URL's Host, subject to both names belonging to the same zone. The asset retains the HTTPS public URL for routing; actual origin TLS SNI/certificate selection and routing must be demonstrated natively before activation. No local Node test proves Cloudflare DNS/TLS behavior. [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/)
 
@@ -62,7 +63,7 @@ Other hostnames, non-default ports and non-HTTPS requests receive no-store 421. 
 
 ## Free-tier deployment gates
 
-Workers Free currently provides **100,000 incoming requests per day per account**, reset at midnight UTC, and **10 ms CPU per HTTP request**. Quota is shared with the account's other Workers. This asset performs two fetch subrequests normally (one probe plus application dispatch), or three when primary readiness fails. Waiting for network I/O does not count toward CPU time, but actual Worker CPU consumption must be measured; Node wall time is not that measurement. [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+Workers Free currently provides **100,000 incoming requests per day per account**, reset at 03:00 MSK (midnight UTC), and **10 ms CPU per HTTP request**. Quota is shared with the account's other Workers. This asset performs two fetch subrequests normally (one probe plus application dispatch), or three when primary readiness fails. Waiting for network I/O does not count toward CPU time, but actual Worker CPU consumption must be measured; Node wall time is not that measurement. [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
 
 Keep the account on Workers Free. Do not enable a paid plan, paid load balancer or paid bindings for this asset. An operator must inspect existing account usage and peak traffic to confirm the free quota is sufficient. This is a no-added-cost deployment candidate, not unlimited availability.
 
@@ -70,11 +71,11 @@ Set the Worker Route to **fail closed**. On Free quota exhaustion, Cloudflare do
 
 Operator-owned enrollment gates:
 
-1. Validate backend HA, adapter authentication/readiness, dependency loss and write-authority withdrawal independently of this Worker.
+1. Validate the declared backend failure behavior, adapter authentication/readiness, dependency loss and write-authority withdrawal independently of this Worker.
 2. Confirm account Free plan/quota, same-zone DNS-only origin records, public proxied Route, strict TLS, native SNI/Host at each origin, required private-origin/cache compatibility flags and date, and no Worker/route recursion or pre-Worker caching.
 3. Test native primary/secondary readiness, both-unready failure, redirects, cookies, cache bypass, POST and GET callback non-replay, streaming and any required WebSockets. Measure Worker CPU and account request headroom.
 4. Verify fail-closed quota handling and exercise location loss, network partitions, stale/rejoining origins and recovery. Record observed recovery time and session behavior before making an HA claim.
-5. Activate only after those gates pass with the intended backend HA. Maintain a documented operator rollback that does not silently route to an unsafe origin.
+5. Activate only after those gates pass with the intended backend failure behavior. Maintain a documented operator rollback that does not silently route to an unsafe origin.
 
 ## Local verification
 
