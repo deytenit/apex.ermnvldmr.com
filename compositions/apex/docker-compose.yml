@@ -91,7 +91,7 @@ services:
   # socket (list/inspect/exec/stop/start) and /srv read-only (the fleet's data root)
   # — a privileged manual one-shot, same trust surface as the old restic core.
   resticontainer:
-    image: ghcr.io/deytenit/resticontainer:0.19.1
+    image: ghcr.io/deytenit/resticontainer:0.19.1@sha256:85457ee665b1c6c8438ac3494c286d267169ee023857da3a605a6fe16dab3d82
     container_name: apex-resticontainer
     volumes:
       - ${APEX_TIER3}/restic/cache:/var/restic-cache
