@@ -1,17 +1,26 @@
 # tests/test_tpl.py
-import os, tempfile, unittest
-from engine.lib.tpl import Tpl
+import os
+import shutil
+import tempfile
+import unittest
+
 from engine.lib.log import Log
+from engine.lib.tpl import Tpl
+
 
 class TestTpl(unittest.TestCase):
     def setUp(self):
         self.cfg = tempfile.mkdtemp()
         self.tpl = Tpl(self.cfg, Log())
 
+    def tearDown(self):
+        shutil.rmtree(self.cfg, ignore_errors=True)
+
     def _w(self, rel, body):
         p = os.path.join(self.cfg, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        open(p, "w").write(body)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(body)
 
     def test_render_substitutes_known_vars(self):
         self._w("cron/crontab", "root=${APEX_TIER1} node=$APEX_NODE\n")
@@ -28,6 +37,7 @@ class TestTpl(unittest.TestCase):
         self._w("fail2ban/sub/extra.conf", "b=${Y}\n")
         out = self.tpl.render_dir("fail2ban", {"X": "1", "Y": "2"})
         self.assertEqual(out, {"jail.local": "a=1\n", "sub/extra.conf": "b=2\n"})
+
 
 if __name__ == "__main__":
     unittest.main()

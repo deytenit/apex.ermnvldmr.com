@@ -63,7 +63,8 @@ def run(ctx, args):
                              "backup produced no new snapshot (no restic.* labels discovered?)")
             raise SystemExit(1)
         log.info("Applying retention (forget --prune)...")
-        if restic("forget", "--prune", "--keep-daily", "7", "--keep-weekly", "4",
+        if restic("forget", "--prune", "--host", host, "--tag", tag,
+                  "--keep-daily", "7", "--keep-weekly", "4",
                   "--keep-monthly", "12", check=False).returncode != 0:
             ctx.notify.error(TITLE, url, "restic forget/prune failed"); raise SystemExit(1)
         log.success("Restic backup completed.")

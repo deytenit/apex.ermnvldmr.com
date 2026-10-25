@@ -57,7 +57,8 @@ def _validate_anchor_ips(ctx) -> int:
         if not os.path.isfile(f):
             continue
         try:
-            text = open(f).read()
+            with open(f, encoding="utf-8") as fh:
+                text = fh.read()
         except OSError as e:
             ctx.log.error(f"Cannot read {f}: {e}"); rc = 1
             continue

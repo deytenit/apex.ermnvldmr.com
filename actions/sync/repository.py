@@ -39,7 +39,7 @@ def run(ctx, args):
         else:
             git("checkout", "-b", branch)
         git("add", "-A")
-        git("submodule", "update", "--remote", "--recursive")
+        git("submodule", "update", "--init", "--recursive")
         git("add", "commons")
         if git("diff", "--cached", "--quiet", check=False).returncode != 0:
             git("commit", "-m", f"[{node}] Auto-commit: {ts}")

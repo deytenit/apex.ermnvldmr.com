@@ -25,8 +25,9 @@ def run(ctx, args):
                      "--source", f"/data/{src_file}", "--dest", "/output", "--domain-subdir=true",
                      "--crt-name=fullchain", "--crt-ext=.pem", "--key-name=privkey", "--key-ext=.pem"],
                     check=True)
-        log.info("Setting secure permissions (600) on extracted keys...")
-        ctx.sys.sudo(["find", abs_dest, "-type", "f", "-name", "*.pem", "-exec", "chmod", "600", "{}", "+"])
+        log.info("Setting secure permissions on extracted certs and keys...")
+        ctx.sys.sudo(["find", abs_dest, "-type", "f", "-name", "*key*.pem", "-exec", "chmod", "600", "{}", "+"])
+        ctx.sys.sudo(["find", abs_dest, "-type", "f", "-name", "*chain*.pem", "-exec", "chmod", "644", "{}", "+"])
         ctx.sys.sudo(["chown", "-R", f"{os.getuid()}:{os.getgid()}", abs_dest])
         log.success("Certificates extracted.")
         ctx.notify.success(TITLE, url, f"Certificates extracted for {node}")

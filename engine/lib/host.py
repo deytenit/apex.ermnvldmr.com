@@ -5,6 +5,7 @@ Ports root_template_crontab (install + rollback) and the ufw block-injection log
 (root_template.sh _root_template_inject_rules_to_ufw_file), generalized + self-healing.
 """
 from __future__ import annotations
+
 import os
 import shutil
 import subprocess
@@ -51,7 +52,7 @@ def apply_block(text: str, content: str, start: str, end: str,
         if not inserted and anchor in ln:
             result.extend(block)
             inserted = True
-    return "\n".join(result) + "\n", True
+    return "\n".join(result) + "\n", inserted
 
 
 class Host:
@@ -64,7 +65,7 @@ class Host:
         if sudo:
             cp = self.sys.run(["sudo", "cat", path], check=True, capture=True)
             return cp.stdout or ""
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return f.read()
 
     def backup(self, path: str, sudo: bool = False) -> Optional[str]:
@@ -80,27 +81,29 @@ class Host:
         self.log.info(f"Backed up {path} -> {bkp}")
         return bkp
 
-    def write_file(self, path: str, content: str, backup: bool = True,
-                   dry_run: bool = False, sudo: bool = False) -> None:
+    def write_file(self, path: str, content: str, mode: Optional[str] = None,
+                   backup: bool = True, dry_run: bool = False, sudo: bool = False) -> None:
         if dry_run:
             self.log.info(f"[DRY-RUN] would write {len(content)} bytes to {path}")
             return
         if backup:
             self.backup(path, sudo=sudo)
-        tmp = tempfile.NamedTemporaryFile("w", delete=False)
-        tmp.write(content)
-        tmp.close()
-        # 0644 like the bash renders (umask-022 redirect); mkstemp's 0600 would make
-        # freshly created units/configs owner-only. Overwrites via sudo cp keep the
-        # destination's existing mode either way.
-        os.chmod(tmp.name, 0o644)
-        if sudo:
-            self.sys.sudo(["mkdir", "-p", os.path.dirname(path)])
-            self.sys.sudo(["cp", tmp.name, path])
-            os.unlink(tmp.name)
-        else:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            shutil.move(tmp.name, path)
+        fd, tmp_name = tempfile.mkstemp(prefix="apex-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                tmp.write(content)
+            target_mode = mode or "0644"
+            if sudo:
+                self.sys.sudo(["mkdir", "-p", os.path.dirname(path)])
+                self.sys.sudo(["cp", tmp_name, path])
+                self.sys.sudo(["chmod", target_mode, path])
+            else:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                shutil.copyfile(tmp_name, path)
+                os.chmod(path, int(target_mode, 8))
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
         self.log.success(f"Wrote {path}")
 
     def inject_block(self, target: str, content: str, start: str, end: str,

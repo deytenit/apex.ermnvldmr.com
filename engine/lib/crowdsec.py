@@ -13,7 +13,7 @@ class Crowdsec:
         if shutil.which("cscli"):
             return
         self.log.info("Installing CrowdSec via official script...")
-        self.sys.run(["bash", "-c", "set -o pipefail; curl -s https://install.crowdsec.net | sudo sh"],
+        self.sys.run(["bash", "-c", "set -o pipefail; curl -sSfL https://install.crowdsec.net | sudo sh"],
                      check=True)
         self.sys.sudo(["apt-get", "install", "-y", "crowdsec"])
 

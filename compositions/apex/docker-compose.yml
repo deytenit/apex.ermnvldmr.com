@@ -7,8 +7,6 @@ x-environment: &shared-environment
   TZ: "${TZ:-Etc/UTC}" # override per node via TZ in the env; default UTC
 
 services:
-
-  # --- optional: adguard (shares traefik netns) ---
   adguard:
     image: adguard/adguardhome:v0.107.79
     container_name: apex-adguard
@@ -42,7 +40,7 @@ services:
     image: grafana/alloy:v1.20.0
     container_name: apex-alloy
     volumes:
-      - ${APEX_COMMONS}/assets/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${APEX_COMMONS}/etc/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - ${APEX_TIER2}/alloy/data:/var/lib/alloy
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro # cadvisor per-container stats on nodes using the containerd snapshotter (overlayfs)
@@ -105,10 +103,10 @@ services:
     environment:
       <<: *shared-environment
       RESTIC_HOSTFS: "/" # mount sources are already absolute (/srv/…)
-      RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY?error}"
-      RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD?error}"
-      AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID?error}"
-      AWS_SECRET_ACCESS_KEY: "${APEX_RESTIC_AWS_SECRET_ACCESS_KEY?error}"
+      RESTIC_REPOSITORY: "${APEX_RESTIC_REPOSITORY:-}"
+      RESTIC_PASSWORD: "${APEX_RESTIC_PASSWORD:-}"
+      AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${APEX_RESTIC_AWS_SECRET_ACCESS_KEY:-}"
       # S3 backend region + endpoint. Defaults suit AWS S3 (us-east-1, no custom
       # endpoint); set APEX_RESTIC_AWS_REGION / APEX_RESTIC_AWS_ENDPOINT (node apex.env)
       # for any other S3-compatible store (Yandex, Backblaze B2, MinIO, …).
@@ -149,7 +147,7 @@ services:
       - ${APEX_TIER1}/traefik/dynamic:/etc/traefik/dynamic:ro
     environment:
       <<: *shared-environment
-      CF_DNS_API_TOKEN: "${APEX_TRAEFIK_CF_DNS_API_TOKEN?error}"
+      CF_DNS_API_TOKEN: "${APEX_TRAEFIK_CF_DNS_API_TOKEN:-}"
       UMASK: "0002"
     ports:
       - '0.0.0.0:80:80'
@@ -182,7 +180,7 @@ services:
       - "--entrypoints.websecure.http3"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge=true"
       - "--certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare"
-      - "--certificatesresolvers.cloudflare.acme.email=${APEX_TRAEFIK_ACME_EMAIL?error}"
+      - "--certificatesresolvers.cloudflare.acme.email=${APEX_TRAEFIK_ACME_EMAIL:-admin@localhost}"
       - "--certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json"
     restart: unless-stopped
     labels:

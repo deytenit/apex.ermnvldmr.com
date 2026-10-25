@@ -5,12 +5,14 @@ The alert `instance` is the node's public host (APEX_NODE_HOST), passed in from 
 context. POSTs application/x-www-form-urlencoded via urllib (stdlib).
 """
 from __future__ import annotations
+
 import html
 import urllib.parse
 import urllib.request
 from datetime import datetime
 
 NOTIFY_TIMEOUT = 20
+MAX_MESSAGE_LEN = 3500
 
 
 def resolve_bot_url(value: str) -> str:
@@ -20,7 +22,7 @@ def resolve_bot_url(value: str) -> str:
     path = value[1:]
     if not path:
         raise ValueError("empty Telegram Bot URL file reference")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return f.read().strip()
 
 
@@ -33,7 +35,7 @@ def build_text(title: str, message: str, node: str, level: str, ts: str) -> str:
     elif level == "WARN":
         severity = "warning"
     instance = node
-    msg = message if len(message) <= 200 else message[:200] + "..."
+    msg = message if len(message) <= MAX_MESSAGE_LEN else message[:MAX_MESSAGE_LEN] + "..."
     msg = html.escape(msg)
     safe_title = html.escape(title)
     return (f"{icon} <b>{safe_title}</b>\n"
@@ -60,6 +62,12 @@ class Notify:
         if not bot_url:
             self.log.warn("Telegram Bot URL not provided. Skipping notification.")
             return False
+
+        parsed = urllib.parse.urlparse(bot_url)
+        if parsed.scheme != "https":
+            self.log.error(f"Telegram Bot URL must use HTTPS, got scheme: {parsed.scheme!r}")
+            return False
+
         ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         text = build_text(title, message, node, level, ts)
         data = urllib.parse.urlencode({"parse_mode": "HTML", "text": text}).encode()

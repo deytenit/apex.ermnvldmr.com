@@ -13,10 +13,11 @@ SHARED_GROUP = "noroot-shared"
 def _env_val(path, key):
     if not os.path.exists(path):
         return ""
-    for line in open(os.path.realpath(path)):
-        line = line.strip()
-        if line.startswith(key + "="):
-            return line.split("=", 1)[1].strip()
+    with open(os.path.realpath(path), encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
     return ""
 
 def run(ctx, args):

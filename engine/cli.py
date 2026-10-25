@@ -12,17 +12,19 @@ from engine.descriptor import build_parser, Meta
 
 
 def _resolve_layout():
-    commons_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    commons_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     parent = os.path.dirname(commons_dir)
-    is_node = (os.path.basename(commons_dir) == "commons"
-               and os.path.isfile(os.path.join(parent, "node.env")))
-    if is_node:
+    cwd = os.getcwd()
+
+    if os.path.isfile(os.path.join(parent, "node.env")):
         repo_root = parent
         prop_actions = os.path.join(repo_root, "proprietaries", "actions")
-    else:
-        repo_root = commons_dir          # standalone commons repo is its own root
-        prop_actions = None
-    return commons_dir, repo_root, prop_actions, is_node
+        return commons_dir, repo_root, prop_actions, True
+    if os.path.isfile(os.path.join(cwd, "node.env")):
+        repo_root = cwd
+        prop_actions = os.path.join(repo_root, "proprietaries", "actions")
+        return commons_dir, repo_root, prop_actions, True
+    return commons_dir, commons_dir, None, False
 
 
 def _print_list(commons_actions, prop_actions):
@@ -47,7 +49,7 @@ def main(argv) -> int:
         sys.stderr.write(f"[global] [core] [ERROR] Unknown action: {name}\n")
         return 1
 
-    node, warns = (resolve(socket.getfqdn(), repo_root) if is_node and name != 'init' else (None, []))
+    node, warns = (resolve(socket.getfqdn(), repo_root) if is_node else (None, []))
     ctx = Context(node, Paths(repo_root, commons_dir), name, shadowed=r.shadowed)
     for w in warns:
         ctx.log.warn(w)

@@ -11,7 +11,7 @@ class TestNotify(unittest.TestCase):
         self.assertIn("#instance_node1_example_com", t)   # dots -> underscores in the hashtag
 
     def test_html_escaped_and_truncated(self):
-        t = build_text("A & B", "<script>" + "x" * 300, "d", "ERROR", "T")
+        t = build_text("A & B", "<script>" + "x" * 4000, "d", "ERROR", "T")
         self.assertIn("A &amp; B", t)
         self.assertIn("&lt;script&gt;", t)
         self.assertIn("...", t)
