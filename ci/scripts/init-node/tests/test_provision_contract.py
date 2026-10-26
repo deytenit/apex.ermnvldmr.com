@@ -7,7 +7,7 @@ from provisioning.contract import ContractError, normalize_user_data, parse_boot
 def example():
     return {
         'preserve_hostname': False,
-        'hostname': 'metis.a1.example.com',
+        'hostname': 'node1.a1.example.com',
         'users': [{
             'name': 'adam',
             'sudo': 'ALL=(ALL) NOPASSWD:ALL',
@@ -19,8 +19,8 @@ def example():
             'path': '/etc/apex/bootstrap.env',
             'owner': 'root:root',
             'permissions': '0600',
-            'content': 'APEX_REPO_NAME="metis.example.com"\n'
-                       'APEX_REPO_URL="https://example.com/team/metis.git"\n',
+            'content': 'APEX_REPO_NAME="node1.example.com"\n'
+                       'APEX_REPO_URL="https://example.com/team/node1.git"\n',
         }],
         'runcmd': ['/usr/local/bin/apex-bootstrap'],
     }
@@ -34,7 +34,7 @@ def add_env(doc, text):
 class TestBootstrapAssignments(unittest.TestCase):
     def test_literal_quotes_comments_and_empty_values(self):
         values = parse_bootstrap_env(
-            '# enrollment\nAPEX_REPO_NAME=metis.example.com\n'
+            '# enrollment\nAPEX_REPO_NAME=node1.example.com\n'
             "APEX_REPO_REF='release-1'\nAPEX_TIER1_DEVICE=\n")
         self.assertEqual(values['APEX_REPO_REF'], 'release-1')
         self.assertEqual(values['APEX_TIER1_DEVICE'], '')
@@ -76,8 +76,8 @@ class TestBootstrapAssignments(unittest.TestCase):
 class TestUserDataContract(unittest.TestCase):
     def test_public_repository_and_directory_defaults(self):
         spec = normalize_user_data(example())
-        self.assertEqual(spec.hostname, 'metis.a1.example.com')
-        self.assertEqual(spec.repository.name, 'metis.example.com')
+        self.assertEqual(spec.hostname, 'node1.a1.example.com')
+        self.assertEqual(spec.repository.name, 'node1.example.com')
         self.assertIsNone(spec.repository.ref)
         self.assertEqual([tier.mode for tier in spec.tiers], ['directory'] * 3)
         self.assertEqual(spec.tiers[0].number, 1)
@@ -173,9 +173,9 @@ class TestUserDataContract(unittest.TestCase):
     def test_repository_paths_and_embedded_passwords(self):
         for name, url in [
             ('../escape', 'https://example.com/repo.git'),
-            ('metis', 'https://user:SECRET_SENTINEL@example.com/repo.git'),
-            ('metis', 'file:///etc/shadow'),
-            ('metis', '-uSECRET_SENTINEL'),
+            ('node1', 'https://user:SECRET_SENTINEL@example.com/repo.git'),
+            ('node1', 'file:///etc/shadow'),
+            ('node1', '-uSECRET_SENTINEL'),
         ]:
             doc = example()
             doc['write_files'][0]['content'] = (

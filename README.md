@@ -22,7 +22,7 @@ cd selfhost.example.com && ./init.sh && source ~/.bashrc
 cat > node.env <<'EOF'
 APEX_NODE_FQDN=selfhost.example.com
 APEX_NODE_HOST=selfhost.example.com
-APEX_SUBNET=198.18.16.0/24
+APEX_SUBNET=198.18.0.0/24
 EOF
 
 # Configure host baseline and bring up compositions
@@ -63,13 +63,12 @@ Running and maintaining services on an existing host.
   - Update services: `apex compose pull && apex compose up`
   - Run backups: `apex backup/run`
   - Sync repository state: `apex sync/repository`
-- **Replication**: For multi-node high availability patterns and contracts, consult the [Composition Replication Documentation](https://docs.ermnvldmr.com/en/apex/concepts/replication/).
 
 Target a composition explicitly when operating on one application:
 
 ```sh
 apex compose -p apex restart traefik
-apex compose -p sso up -d
+apex compose -p app up -d
 apex compose --dry-run -p apex logs --tail 20 xray
 ```
 
@@ -79,9 +78,8 @@ remain supported. Use `-p` when service names or option values could be mistaken
 for composition names. Without a target, APEX visits core first, then other
 compositions alphabetically; `down` reverses that order.
 
-Compose operations do not remove Xray sockets. Keep any node-owned socket cleanup
-in Xray's startup entrypoint, when its previous process has stopped. A targeted
-restart or an unchanged `up` must not remove another running service's listeners.
+Replace `app` with a composition defined in your repository. Use targeted `up -d`
+after changing a container definition; `restart` retains the existing definition.
 
 For direct Docker Compose use in the core composition:
 
@@ -124,6 +122,7 @@ Bootstrapping clean Debian 13 hosts on bare metal or cloud providers without clo
 Adding shared actions or improving the engine.
 
 - **Conventions**: Maintain strict Python standard library compliance. No external runtime packages.
+- **Public documentation**: Describe supported interfaces using synthetic examples. Keep deployment inventories, internal plans, operational runbooks, and host-specific configuration in their owning private repositories.
 - **Setup**:
   ```sh
   python3 -m venv .venv

@@ -23,7 +23,7 @@ class UserDataTests(unittest.TestCase):
         import yaml
         from test_provision_contract import example
         spec = decode_user_data(yaml.safe_dump(example()).encode())
-        self.assertEqual(spec.hostname, 'metis.a1.example.com')
+        self.assertEqual(spec.hostname, 'node1.a1.example.com')
 
     def test_yaml_boolean_mapping_key_rejected(self):
         with self.assertRaisesRegex(ContractError, 'unique strings'):

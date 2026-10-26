@@ -1,9 +1,8 @@
 # engine/lib/tpl.py
-"""ctx.tpl — stdlib string.Template rendering (envsubst successor, SP2 decision #3).
+"""ctx.tpl — stdlib string.Template rendering.
 
-safe_substitute replaces known $VAR/${VAR} and leaves unknown ones literal (deliberate
-delta: envsubst emptied them — literal survivors surface typos instead of silently
-blanking). Shell $(...) command-substitution survives untouched.
+safe_substitute replaces known $VAR/${VAR} and leaves unknown ones literal.
+Shell $(...) command-substitution survives untouched.
 Loops/conditionals live in the python action, never in the template file.
 """
 from __future__ import annotations

@@ -1,5 +1,5 @@
 # engine/context.py
-"""Context (ctx) — the single seam between an action and the world (SP2 §2.1)."""
+"""Context and filesystem paths available to actions."""
 from __future__ import annotations
 import os
 

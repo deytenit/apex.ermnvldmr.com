@@ -24,7 +24,7 @@ class TestEnv(unittest.TestCase):
         self.ctx = MagicMock()
         self.ctx.paths.compositions = str(self.core.parent)
         self.ctx.vars.return_value = {
-            'APEX_SUBNET': '198.18.16.0/24',
+            'APEX_SUBNET': '198.18.0.0/24',
             'APEX_NODE_HOST': 'test-host',
             'OTHER_VAR': 'ignore_me',
         }

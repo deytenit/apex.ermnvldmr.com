@@ -1,9 +1,8 @@
 # engine/lib/ufw.py
-"""ctx.ufw — ufw + ufw-docker rule application with self-healing marker migration.
+"""Apply ufw and ufw-docker rules.
 
-Injects the APEX marker block into before/after.rules, deleting BOTH the old ROOT
-and the new APEX blocks first (so re-running after cutover migrates the marker in
-place — SP2 §6). Docker rules go through ufw-docker; host rules through plain ufw.
+Replace existing supported marker blocks before inserting current rules.
+Docker rules go through ufw-docker; host rules through plain ufw.
 """
 from __future__ import annotations
 

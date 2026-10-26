@@ -1,5 +1,5 @@
 # actions/configure.py
-"""Umbrella: run every configure/* action in a stable order (SP2 §3.1)."""
+"""Run every configure/* action in a stable order."""
 import os
 from engine.descriptor import Meta, Flag, build_parser
 from engine import overlay

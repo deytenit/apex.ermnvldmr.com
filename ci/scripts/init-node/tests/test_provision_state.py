@@ -37,12 +37,12 @@ class StateTests(unittest.TestCase):
 
     def test_failed_stage_is_retryable_and_success_is_reverified(self):
         path = self.root / 'journal'
-        record = Journal(path, {'hostname': 'metis'}, 'rev', 'digest')
+        record = Journal(path, {'hostname': 'node1'}, 'rev', 'digest')
         with self.assertRaises(RuntimeError):
             record.stage('package', lambda: (_ for _ in ()).throw(RuntimeError('SECRET')))
         self.assertNotIn('SECRET', path.read_text())
         self.assertEqual(json.loads(path.read_text())['failed_stage'], 'package')
-        record = Journal(path, {'hostname': 'metis'}, 'rev', 'digest')
+        record = Journal(path, {'hostname': 'node1'}, 'rev', 'digest')
         results = iter(({'version': 'one'}, {'version': 'two'}))
         record.stage('package', lambda: next(results))
         record.stage('package', lambda: next(results))
@@ -50,21 +50,21 @@ class StateTests(unittest.TestCase):
 
     def test_identity_or_bundle_change_cannot_retarget_partial_run(self):
         path = self.root / 'journal'
-        Journal(path, {'hostname': 'metis'}, 'rev', 'digest').save()
-        for identity, digest in (({'hostname': 'other'}, 'digest'), ({'hostname': 'metis'}, 'other')):
+        Journal(path, {'hostname': 'node1'}, 'rev', 'digest').save()
+        for identity, digest in (({'hostname': 'other'}, 'digest'), ({'hostname': 'node1'}, 'other')):
             with self.assertRaises(ProvisionError):
                 Journal(path, identity, 'rev', digest)
 
     def test_unsupported_interface_cannot_resume_and_revisions_survive_retry(self):
         path = self.root / 'journal'
-        Journal(path, {'hostname': 'metis'}, 'source-rev', 'digest').save()
-        resumed = Journal(path, {'hostname': 'metis'}, 'source-rev', 'digest')
+        Journal(path, {'hostname': 'node1'}, 'source-rev', 'digest').save()
+        resumed = Journal(path, {'hostname': 'node1'}, 'source-rev', 'digest')
         self.assertEqual(resumed.data['baseline_revision'], 'source-rev')
         for version in (None, 999):
             resumed.data['enrollment_interface'] = version
             resumed.save()
             with self.assertRaisesRegex(ProvisionError, 'enrollment interface'):
-                Journal(path, {'hostname': 'metis'}, 'source-rev', 'digest')
+                Journal(path, {'hostname': 'node1'}, 'source-rev', 'digest')
 
     def test_expired_heartbeat_prevents_next_operation(self):
         beat = self.root / 'heartbeat'

@@ -1,5 +1,5 @@
 # commons/compositions/apex/docker-compose.yml
-# The shared apex CORE composition. Consumed by each node via include: (SP3).
+# The shared apex CORE composition. Available to node compositions through include:.
 # FULLY ${env}-parameterized; NO './' host paths (relative paths in an included file
 # resolve against THIS dir — always use absolute ${APEX_*} vars). The engine exports
 # APEX_TIER*/APEX_TIER*_SHARED/APEX_TIER_ROOT*/APEX_SUBNET/APEX_NODE_FQDN at invoke.
@@ -18,7 +18,7 @@ services:
     network_mode: "service:traefik"
     restart: unless-stopped
     labels:
-      # backup (resticontainer, core/all-nodes): adguard config only (work data regenerable)
+      # backup (resticontainer): adguard config only (work data regenerable)
       - "restic.enable=true"
       - "restic.backup.paths=/opt/adguardhome/conf"
     cap_add:
@@ -30,12 +30,8 @@ services:
       - no-new-privileges:true
 
   # --- optional: observability agent (profile-gated) ---
-  # Grafana Alloy: one agent per node. Collects host metrics (node_exporter-
-  # equivalent) + container metrics (cadvisor) and PUSHES them via remote_write;
-  # collects systemd-journal + docker logs and PUSHES them to Loki. All targets
-  # are OUTBOUND to a central Prometheus + Loki (hosted on whichever node runs them), so
-  # Alloy needs egress (direct, not enclave). Replaces the old store-only `loki`
-  # service (which had no feeder). Config is a committed, env-parameterized asset.
+  # Collect host/container metrics and logs for configured remote endpoints.
+  # Alloy requires outbound access to those endpoints through the direct network.
   alloy:
     image: grafana/alloy:v1.20.0
     container_name: apex-alloy
@@ -86,8 +82,7 @@ services:
   # container mounts to host paths (via the /srv mount), snapshots the union
   # in a single restic run, then restarts + runs post-hooks. Every other subcommand
   # (init/snapshots/forget/…) passes straight through to restic. Needs the docker
-  # socket (list/inspect/exec/stop/start) and /srv read-only (the fleet's data root)
-  # — a privileged manual one-shot, same trust surface as the old restic core.
+  # socket (list/inspect/exec/stop/start) and read-only access to /srv.
   resticontainer:
     image: ghcr.io/deytenit/resticontainer:0.19.1@sha256:85457ee665b1c6c8438ac3494c286d267169ee023857da3a605a6fe16dab3d82
     container_name: apex-resticontainer
@@ -112,9 +107,8 @@ services:
       # for any other S3-compatible store (Yandex, Backblaze B2, MinIO, …).
       AWS_REGION: "${APEX_RESTIC_AWS_REGION:-us-east-1}"
       AWS_ENDPOINT_URL: "${APEX_RESTIC_AWS_ENDPOINT:-}"
-      # max compression is fleet policy (backup/run also forces --compression max on
-      # the CLI; needs repo format v2, which a fresh restic init creates). Per-node
-      # override via APEX_RESTIC_COMPRESSION only if ever needed.
+      # Compression requires repository format v2. The default is max;
+      # override it with APEX_RESTIC_COMPRESSION for direct container use.
       RESTIC_COMPRESSION: "${APEX_RESTIC_COMPRESSION:-max}"
       RESTIC_CACHE_DIR: /var/restic-cache
     network_mode: "host"
@@ -195,7 +189,7 @@ services:
       - "traefik.http.middlewares.apex-adguard-strip-prefix.stripprefix.prefixes=/adguard"
       - "traefik.http.routers.apex-adguard.service=apex-adguard"
       - "traefik.http.services.apex-adguard.loadbalancer.server.port=3000"
-      # backup (resticontainer, core/all-nodes): dynamic routing rules only
+      # backup (resticontainer): dynamic routing rules only
       # (letsencrypt certs are regenerable via ACME/Cloudflare DNS-01)
       - "restic.enable=true"
       - "restic.backup.paths=/etc/traefik/dynamic"
@@ -218,7 +212,7 @@ services:
     command: [ "-c", "/etc/xray/config.jsonc" ]
     restart: unless-stopped
     labels:
-      # backup (resticontainer, core/all-nodes): xray config only (logs + shm are ephemeral)
+      # backup (resticontainer): xray config only (logs + shm are ephemeral)
       - "restic.enable=true"
       - "restic.backup.paths=/etc/xray/config.jsonc"
     user: "0:0"

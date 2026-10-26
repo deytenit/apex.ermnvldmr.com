@@ -1,13 +1,6 @@
-// ============================================================================
-// APEX fleet observability agent — per-node Grafana Alloy config (shared).
-// Committed, env-parameterized: every node runs this SAME file; per-node values
-// come from sys.env(...) (APEX_NODE_HOST, push URLs, obs basic-auth creds).
-// Verified against grafana.com/docs/alloy/latest (Alloy v1.17.1).
-// ============================================================================
-// Model: PUSH. Metrics -> remote_write to a central Prometheus; logs -> loki.write
-// to a central Loki. Push endpoints + basic-auth are per-node env
-// (APEX_PROM_PUSH_URL, APEX_LOKI_PUSH_URL, APEX_OBS_BASIC_AUTH_USER/PASS).
-// ============================================================================
+// Optional shared Grafana Alloy configuration.
+// Metrics and logs use the endpoints and credentials supplied through
+// APEX_PROM_PUSH_URL, APEX_LOKI_PUSH_URL, and APEX_OBS_BASIC_AUTH_USER/PASS.
 
 // ----------------------------------------------------------------------------
 // METRICS
@@ -81,10 +74,8 @@ prometheus.scrape "containers" {
   scrape_interval = "30s"
 }
 
-// CrowdSec agent metrics. CrowdSec runs on the host (not a container) and exposes Prometheus
-// metrics on :6060; nodes that run it bind that endpoint on 0.0.0.0 (the host firewall keeps it
-// off the public interface) so Alloy can reach it via the docker gateway. Nodes that don't run
-// CrowdSec simply report this target down.
+// The CrowdSec scrape requires a reachable host metrics endpoint on port 6060.
+// If no endpoint is configured, this target reports down.
 prometheus.scrape "crowdsec" {
   targets = [{
     __address__ = "host.docker.internal:6060",
@@ -96,7 +87,7 @@ prometheus.scrape "crowdsec" {
   scrape_interval = "30s"
 }
 
-// Push metrics to the central Prometheus (needs --web.enable-remote-write-receiver).
+// The configured Prometheus-compatible endpoint must accept remote writes.
 prometheus.remote_write "default" {
   endpoint {
     url = sys.env("APEX_PROM_PUSH_URL")

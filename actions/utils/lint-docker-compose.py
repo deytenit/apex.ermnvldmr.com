@@ -1,7 +1,7 @@
 # actions/utils/lint-docker-compose.py
-"""Port of utils/lint-docker-compose (dclint via docker) + stdlib anchor-IP validation:
+"""Run dclint through Docker and validate anchor IPs:
 every ipv4_address in compositions/*/docker-compose.yml must be unique and inside the
-node's /24 (SP3 §6.2). No new deps — ipaddress + re are stdlib."""
+node's /24."""
 import ipaddress, os, re, shutil
 from engine.descriptor import Meta, Flag
 

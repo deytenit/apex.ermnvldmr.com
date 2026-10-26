@@ -32,7 +32,7 @@ class RepositoryTests(unittest.TestCase):
         (self.commons / 'etc/.vimrc').write_text('set number\n')
         self.git(['add', '.'], self.commons)
         self.git(['commit', '-qm', 'initial'], self.commons)
-        (self.upstream / 'node.env').write_text('APEX_NODE_FQDN=metis.example.com\nAPEX_ENROLLMENT_INTERFACE=1\n')
+        (self.upstream / 'node.env').write_text('APEX_NODE_FQDN=node1.example.com\nAPEX_ENROLLMENT_INTERFACE=1\n')
         (self.upstream / 'init.sh').write_text(
             '#!/bin/sh\nset -eu\ngit config core.hooksPath commons/githooks\n'
             'printf \'export PATH="%s/commons:$PATH"\\n\' "$PWD" > "$HOME/.bashrc"\n'
@@ -40,7 +40,7 @@ class RepositoryTests(unittest.TestCase):
         self.git(['-c', 'protocol.file.allow=always', 'submodule', 'add', str(self.commons), 'commons'], self.upstream)
         self.git(['add', '.'], self.upstream)
         self.git(['commit', '-qm', 'initial'], self.upstream)
-        self.spec = Enrollment('metis.example.com', Repository('metis', str(self.upstream), None), (), (), ())
+        self.spec = Enrollment('node1.example.com', Repository('node1', str(self.upstream), None), (), (), ())
         self.state = {}
         self.saved = []
         self.account = patch('provisioning.repository.pwd.getpwnam',
@@ -71,19 +71,19 @@ class RepositoryTests(unittest.TestCase):
         self.git(['commit', '-qm', 'advance'], self.upstream)
         second = self.enroll()
         self.assertEqual(first['commit'], second['commit'])
-        self.assertFalse((self.srv / 'metis' / 'new').exists())
+        self.assertFalse((self.srv / 'node1' / 'new').exists())
         self.assertTrue(self.state['repository']['hook_complete'])
 
     def test_local_changes_are_preserved_and_stop_initialization(self):
         self.enroll()
-        path = self.srv / 'metis' / 'node.env'
+        path = self.srv / 'node1' / 'node.env'
         path.write_text('local changes')
         with self.assertRaisesRegex(ProvisionError, 'local changes'):
             self.enroll()
         self.assertEqual(path.read_text(), 'local changes')
 
     def test_unrecorded_checkout_is_not_adopted(self):
-        (self.srv / 'metis').mkdir()
+        (self.srv / 'node1').mkdir()
         with self.assertRaisesRegex(ProvisionError, 'adoption'):
             self.enroll()
 
@@ -98,10 +98,10 @@ class RepositoryTests(unittest.TestCase):
     def test_missing_or_unsupported_interface_stops_before_hook(self):
         for version in ('', 'APEX_ENROLLMENT_INTERFACE=999\n'):
             with self.subTest(version=version):
-                (self.upstream / 'node.env').write_text('APEX_NODE_FQDN=metis.example.com\n' + version)
+                (self.upstream / 'node.env').write_text('APEX_NODE_FQDN=node1.example.com\n' + version)
                 self.git(['add', '.'], self.upstream)
                 self.git(['commit', '-qm', 'unsupported interface'], self.upstream)
-                self.spec = Enrollment('metis.example.com', Repository('missing-' + str(len(version)), str(self.upstream), None), (), (), ())
+                self.spec = Enrollment('node1.example.com', Repository('missing-' + str(len(version)), str(self.upstream), None), (), (), ())
                 self.state = {}
                 with self.assertRaisesRegex(ProvisionError, 'enrollment interface'):
                     self.enroll()
@@ -110,7 +110,7 @@ class RepositoryTests(unittest.TestCase):
 
     def test_retry_checks_hook_state_instead_of_completion_marker(self):
         self.enroll()
-        self.git(['config', 'core.hooksPath', 'wrong-path'], self.srv / 'metis')
+        self.git(['config', 'core.hooksPath', 'wrong-path'], self.srv / 'node1')
         with self.assertRaisesRegex(ProvisionError, 'hook configuration'):
             self.enroll()
 
