@@ -1,13 +1,13 @@
 .PHONY: test lint fmt check
 
 test:
-	python3 -m unittest discover -s tests
+	bash tests/run.sh
 
 lint:
 	@if command -v ruff >/dev/null 2>&1; then \
 		ruff check .; \
 	else \
-		python3 -m py_compile engine/**/*.py actions/**/*.py tests/*.py; \
+		python3 -m compileall -q engine actions tests ci/scripts && \
 		echo "ruff not installed in PATH; verified python bytecode compilation."; \
 	fi
 

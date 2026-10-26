@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from engine.provisioning.contract import Enrollment, Repository, Tier
-from engine.provisioning import storage
-from engine.provisioning.storage import StorageError, _persist_swap, reconcile_storage
+from provisioning.contract import Enrollment, Repository, Tier
+from provisioning import storage
+from provisioning.storage import StorageError, _persist_swap, reconcile_storage
 
 
 def enrollment(*tiers):
@@ -49,13 +49,13 @@ class TestStorage(unittest.TestCase):
         self.create_hook = None
         for name, value in [('SRV', self.srv), ('SWAPFILE', self.swap),
                             ('FSTAB', self.fstab), ('MEMINFO', self.meminfo), ('SWAPS', self.swaps)]:
-            patcher = patch('engine.provisioning.storage.' + name, value, create=True)
+            patcher = patch('provisioning.storage.' + name, value, create=True)
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = patch('engine.provisioning.storage.subprocess.run', side_effect=self.run_command)
+        patcher = patch('provisioning.storage.subprocess.run', side_effect=self.run_command)
         patcher.start()
         self.addCleanup(patcher.stop)
-        patcher = patch('engine.provisioning.storage._device_number', side_effect=self.device_number)
+        patcher = patch('provisioning.storage._device_number', side_effect=self.device_number)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -365,7 +365,7 @@ class TestStorage(unittest.TestCase):
 
     def test_swap_skip_reports_low_space_and_unsupported_filesystems(self):
         self.set_active_swaps([])
-        with patch('engine.provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=1, f_frsize=4096)):
+        with patch('provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=1, f_frsize=4096)):
             result = reconcile_storage(enrollment(), self.state, self.save)
         self.assertIn('insufficient', result['swap']['reason'])
         self.mounts[0]['fstype'] = 'btrfs'
@@ -375,9 +375,9 @@ class TestStorage(unittest.TestCase):
 
     def test_swap_sizes_allocation_and_records_verified_result(self):
         self.set_active_swaps([])
-        with patch('engine.provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=16, f_frsize=1024 ** 3)), \
-                patch('engine.provisioning.storage.os.posix_fallocate', create=True) as allocate, \
-                patch('engine.provisioning.storage._persist_swap') as persist:
+        with patch('provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=16, f_frsize=1024 ** 3)), \
+                patch('provisioning.storage.os.posix_fallocate', create=True) as allocate, \
+                patch('provisioning.storage._persist_swap') as persist:
             result = reconcile_storage(enrollment(), self.state, self.save)
         self.assertEqual(allocate.call_args.args[1:], (0, 4 * 1024 ** 3))
         self.assertEqual(result['swap'], {'status': 'complete', 'size': 4 * 1024 ** 3})
@@ -401,9 +401,9 @@ class TestStorage(unittest.TestCase):
     def test_unobserved_swap_activation_is_not_persisted_or_reported_complete(self):
         self.set_active_swaps([])
         self.activate_swap = False
-        with patch('engine.provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=16, f_frsize=1024 ** 3)), \
-                patch('engine.provisioning.storage.os.posix_fallocate', create=True), \
-                patch('engine.provisioning.storage._persist_swap') as persist:
+        with patch('provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=16, f_frsize=1024 ** 3)), \
+                patch('provisioning.storage.os.posix_fallocate', create=True), \
+                patch('provisioning.storage._persist_swap') as persist:
             result = reconcile_storage(enrollment(), self.state, self.save)
         self.assertEqual(result['swap']['status'], 'skipped')
         self.assertIn('activation did not become observable', result['swap']['reason'])
@@ -421,9 +421,9 @@ class TestStorage(unittest.TestCase):
     def test_small_memory_swap_is_two_gib(self):
         self.set_active_swaps([])
         self.meminfo.write_text('MemTotal:       4194304 kB\n')
-        with patch('engine.provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=16, f_frsize=1024 ** 3)), \
-                patch('engine.provisioning.storage.os.posix_fallocate', create=True) as allocate, \
-                patch('engine.provisioning.storage._persist_swap'):
+        with patch('provisioning.storage.os.statvfs', return_value=SimpleNamespace(f_bavail=16, f_frsize=1024 ** 3)), \
+                patch('provisioning.storage.os.posix_fallocate', create=True) as allocate, \
+                patch('provisioning.storage._persist_swap'):
             result = reconcile_storage(enrollment(), self.state, self.save)
         self.assertEqual(allocate.call_args.args[1:], (0, 2 * 1024 ** 3))
         self.assertEqual(result['swap']['size'], 2 * 1024 ** 3)
@@ -439,8 +439,8 @@ class TestStorage(unittest.TestCase):
                 return os.stat_result(fields)
             return info
 
-        with patch('engine.provisioning.storage.Path.lstat', root_owned), \
-                patch('engine.provisioning.storage.os.fchown'):
+        with patch('provisioning.storage.Path.lstat', root_owned), \
+                patch('provisioning.storage.os.fchown'):
             _persist_swap()
             _persist_swap()
         self.assertEqual(self.fstab.read_text(), '# existing entries\n' +

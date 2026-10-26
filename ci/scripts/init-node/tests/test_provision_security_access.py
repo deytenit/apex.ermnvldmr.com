@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from engine.provisioning.access import AccessError, Transition
-from engine.provisioning.security import SecurityError
+from provisioning.access import AccessError, Transition
+from provisioning.security import SecurityError
 from test_provision_access import FakeHost, TOKEN
 
 

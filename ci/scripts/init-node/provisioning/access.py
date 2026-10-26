@@ -319,12 +319,12 @@ class Host:
         self.command(['ufw', '--force', 'delete', 'allow', '2222/tcp', 'comment', 'apex-init-access'])
 
     def arm(self):
-        bundle = Path(__file__).resolve().parents[2]
+        bundle = Path(__file__).resolve().parents[1]
         if not re.fullmatch(r'/usr/local/lib/apex-provisioner/[a-f0-9]{64}', str(bundle)):
             raise AccessError('Access runner must execute from the installed root-owned bundle')
         service = ('[Unit]\nDescription=APEX pending access rollback\nAfter=local-fs.target\n'
                    '[Service]\nType=oneshot\nWorkingDirectory=' + str(bundle) + '\n'
-                   'ExecStart=/usr/bin/python3 -m engine.provisioning.access tick\n')
+                   'ExecStart=/usr/bin/python3 -m provisioning.access tick\n')
         timer = ('[Unit]\nDescription=APEX access rollback deadline and boot recovery\n'
                  '[Timer]\nOnBootSec=5s\nOnUnitActiveSec=10s\nAccuracySec=1s\n'
                  '[Install]\nWantedBy=timers.target\n')

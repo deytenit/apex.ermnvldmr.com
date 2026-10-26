@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from engine.provisioning.access import AccessError, Host, Transition, atomic, main
+from provisioning.access import AccessError, Host, Transition, atomic, main
 from provision_fakes import SecurityBoundary
 
 
@@ -122,7 +122,7 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.host.restored, 1)
 
     def test_watchdog_restores_access_while_enrollment_lock_is_held(self):
-        from engine.provisioning.state import exclusive_lock
+        from provisioning.state import exclusive_lock
         self.begin()
         self.clock += 301
         with exclusive_lock(self.host.path('/var/lib/apex-init/init.lock')):
@@ -297,8 +297,8 @@ class LivePolicyTests(unittest.TestCase):
             return self.runner(args, **kwargs)
         self.host.runner = unseeded
         before = sorted(self.root.rglob('*'))
-        with patch('engine.provisioning.access.Host', return_value=self.host), \
-                patch('engine.provisioning.access.os.geteuid', return_value=0):
+        with patch('provisioning.access.Host', return_value=self.host), \
+                patch('provisioning.access.os.geteuid', return_value=0):
             self.assertEqual(main(['preflight']), 0)
         self.assertEqual(sorted(self.root.rglob('*')), before)
         self.assertIn(['/usr/sbin/sshd', '-t'], self.calls)
@@ -309,7 +309,7 @@ class LivePolicyTests(unittest.TestCase):
         self.cmdline()
         for failure in ('socket', 'invocation'):
             with self.subTest(failure=failure):
-                def incompatible(args, **kwargs):
+                def incompatible(args, failure=failure, **kwargs):
                     if failure == 'socket' and args == ['systemctl', 'is-enabled', '--quiet', 'ssh.socket']:
                         return subprocess.CompletedProcess(args, 0, '', '')
                     return self.runner(args, **kwargs)

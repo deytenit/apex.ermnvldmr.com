@@ -220,7 +220,7 @@ def run(ctx, args):
     except Exception as e:   # bash ERR trap parity: unhandled failures page via Telegram
         log.error(f"{type(e).__name__}: {e}")
         ctx.notify.error(TITLE, url, f"Critical error: {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 def _check(ctx, args, log, node, url, s):
     if not os.path.isfile("/etc/debian_version"):

@@ -8,10 +8,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from engine.provisioning import target
-from engine.provisioning.contract import normalize_user_data
-from engine.provisioning.state import ProvisionError, atomic_write, safe_path
-from tests.test_provision_contract import example
+from provisioning import target
+from provisioning.contract import normalize_user_data
+from provisioning.state import ProvisionError, atomic_write, safe_path
+from test_provision_contract import example
 
 
 class TargetTests(unittest.TestCase):

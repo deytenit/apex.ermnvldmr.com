@@ -129,17 +129,19 @@ def destination(value, port=None):
     return match[1], hostname, int(port) if port is not None else None
 
 
-def build_bundle(commons):
-    root = Path(commons)
-    files = sorted((root / 'engine').rglob('*.py'))
-    seed = root / 'engine/provisioning/seed.sh'
-    if not seed.is_file():
-        raise TransportError('Provisioning seed is missing')
+def _bundle_from_source(root):
+    root = Path(root).resolve()
+    package = root / 'provisioning'
+    files = sorted(package.rglob('*.py'))
+    seed = package / 'seed.sh'
+    if not seed.is_file() or not (package / '__init__.py').is_file():
+        raise TransportError('Provisioning package or seed is missing')
     files.append(seed)
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode='w') as archive:
         for path in files:
-            if path.is_symlink() or '__pycache__' in path.parts:
+            if (not path.is_file() or '__pycache__' in path.parts
+                    or any(part.is_symlink() for part in (path, *path.parents))):
                 raise TransportError('Provisioning bundle contains an unsafe source path')
             data = path.read_bytes()
             info = tarfile.TarInfo(path.relative_to(root).as_posix())
@@ -147,15 +149,21 @@ def build_bundle(commons):
             info.uid = info.gid = 0
             archive.addfile(info, io.BytesIO(data))
     data = output.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def build_bundle(commons):
+    root = Path(commons).resolve()
+    data, digest = _bundle_from_source(root / 'ci/scripts/init-node')
     revision = 'unversioned-modified'
     if shutil.which('git'):
         result = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=30)
         if result.returncode == 0 and re.fullmatch(r'[a-f0-9]{40,64}\n?', result.stdout):
             revision = result.stdout.strip()
-            dirty = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--', 'engine'], capture_output=True, text=True, timeout=30)
+            dirty = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--', 'ci/scripts/init-node', 'ci/scripts/init-node.py'], capture_output=True, text=True, timeout=30)
             if dirty.returncode or dirty.stdout.strip():
                 revision += '-modified'
-    return data, hashlib.sha256(data).hexdigest(), revision
+    return data, digest, revision
 
 
 class SSH:
@@ -240,7 +248,7 @@ def protected_handover(ssh, invoke, token, port, client_address):
         except Exception:
             try:
                 invoke('rollback', token, None, None, False)
-            except Exception:
+            except Exception:  # noqa: S110 — diagnostics may contain secrets.
                 pass  # Persistent timer is authoritative if both connections are gone.
         raise
 
@@ -297,7 +305,7 @@ def initialize(commons, target, user_data, port=None, identity_file=None, progre
                 if active.returncode == 0:
                     raise TransportError('An enrollment unit is still running: ' + previous_unit + '; wait for it to settle before resuming')
             stage = ssh.run(REMOTE_PATH_GUARD + '\napex_guard_dir /var/tmp; mktemp -d /var/tmp/apex-init.XXXXXXXXXX').stdout.decode().strip()
-            if not re.fullmatch(r'/var/tmp/apex-init\.[A-Za-z0-9]{10}', stage):
+            if not re.fullmatch(r'/var/tmp/apex-init\.[A-Za-z0-9]{10}', stage):  # noqa: S108 — validates remote mktemp output.
                 raise TransportError('Target returned an invalid staging path')
             # Hard reboot can bypass the shell trap; boot-time tmpfiles removes opaque inputs.
             cleanup = ('r ' + stage + '/user-data - - - -\n' +
@@ -308,13 +316,13 @@ def initialize(commons, target, user_data, port=None, identity_file=None, progre
             install = remote_bundle_install(stage, installed, digest)
             progress('Installing the versioned target runtime and validating enrollment input.')
             ssh.run(install)
-            base = ['python3', '-m', 'engine.provisioning.target']
+            base = ['python3', '-m', 'provisioning.target']
             options = ['--user-data', stage + '/user-data', '--revision', revision, '--bundle-digest', digest]
             # State remains inspectable after disconnect; user-data is removed by the durable unit.
             enrollment = shlex.join(base + ['enroll'] + options + ['--heartbeat', stage + '/heartbeat'])
             validation = shlex.join(base + ['validate'] + options)
-            access_preflight = shlex.join(['python3', '-m', 'engine.provisioning.access', 'preflight'])
-            seed = shlex.join(['bash', installed + '/engine/provisioning/seed.sh'])
+            access_preflight = shlex.join(['python3', '-m', 'provisioning.access', 'preflight'])
+            seed = shlex.join(['bash', installed + '/provisioning/seed.sh'])
             wrapper = ('umask 077; cd ' + installed + '; '
                        'trap ' + shlex.quote('rm -f ' + stage + '/user-data ' + stage + '/heartbeat ' + cleanup_policy) + ' EXIT; '
                        '{ ' + seed + ' && ' + validation + ' && ' + access_preflight + ' && ' + enrollment + '; } >' + stage + '/runner.log 2>&1; rc=$?; '
@@ -344,7 +352,7 @@ def initialize(commons, target, user_data, port=None, identity_file=None, progre
                     result = ssh.run(REMOTE_PATH_GUARD + '\napex_guard_file /var/lib/apex-init/access/state.json; '
                                      'cat /var/lib/apex-init/access/state.json', fresh=True)
                     return json.loads(result.stdout)
-                args = ['python3', '-m', 'engine.provisioning.access', operation, '--token', token]
+                args = ['python3', '-m', 'provisioning.access', operation, '--token', token]
                 if original_port:
                     args += ['--original-port', str(original_port), '--client-address', address]
                 result = ssh.run('cd ' + installed + ' && ' + shlex.join(args), fresh=fresh)
@@ -368,7 +376,7 @@ def initialize(commons, target, user_data, port=None, identity_file=None, progre
                     try:
                         ssh.run('rm -f ' + stage + '/user-data ' + stage + '/heartbeat ' + stage + '/bundle.tar ' + cleanup_policy, fresh=fresh)
                         break
-                    except Exception:
+                    except Exception:  # noqa: S110 — cleanup tries both verified endpoints.
                         pass
             if launched and not finished:
                 progress('Coordinator stopped. The current target stage may finish; later stages stop after heartbeat expiry.')
@@ -379,7 +387,8 @@ def initialize(commons, target, user_data, port=None, identity_file=None, progre
                 label = 'Safe resume' + ('' if access_committed else ' after any pending rollback')
                 endpoints = [(label, 'adam' if access_committed else ssh.user, 2222 if access_committed else ssh.resolved_port)]
             for label, resume_user, resume_port in endpoints:
-                resume = './apex init ' + resume_user + '@' + ssh.host + ' --port ' + str(resume_port) + ' --user-data ' + shlex.quote(str(source))
+                resume = ['python3', 'ci/scripts/init-node.py', resume_user + '@' + ssh.host,
+                          '--port', str(resume_port), '--user-data', str(source)]
                 if ssh.identity:
-                    resume += ' --identity-file ' + shlex.quote(str(ssh.identity))
-                progress(label + ': ' + resume)
+                    resume += ['--identity-file', str(ssh.identity)]
+                progress(label + ': ' + shlex.join(resume))

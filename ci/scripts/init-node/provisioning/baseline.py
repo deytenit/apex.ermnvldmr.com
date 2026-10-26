@@ -325,7 +325,8 @@ def configure_sources():
         key = Path(f"/etc/apt/keyrings/apex-{name}.asc")
         if not key.exists():
             try:
-                with urllib.request.urlopen(key_url, timeout=30) as response:
+                # Both repository key URLs above are fixed HTTPS endpoints.
+                with urllib.request.urlopen(key_url, timeout=30) as response:  # noqa: S310
                     data = response.read()
             except OSError as exc:
                 raise BaselineError(f"Cannot download {name} repository signing key.") from exc

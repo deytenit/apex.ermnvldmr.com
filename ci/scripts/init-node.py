@@ -13,7 +13,8 @@ _repo_root = os.path.dirname(os.path.dirname(_here))
 _prov_dir = os.path.join(_here, "init-node")
 sys.path.insert(0, _prov_dir)
 
-from provisioning.transport import initialize
+# The standalone package lives beside this launcher, outside the engine.
+from provisioning.transport import initialize  # noqa: E402
 
 
 def main(argv=None):

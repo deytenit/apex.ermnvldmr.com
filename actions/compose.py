@@ -2,40 +2,39 @@
 """Orchestrate docker compose across the node.
 
 Supports targeting all compositions in sequence (default: apex core first, services next;
-reverse on down) or targeting a specific composition (e.g. `apex compose restart apex`
-or `apex compose up -d sso`). Exports derived APEX_* vars and layers --env-file (.env secrets + apex.env).
+reverse on down) or targeting one with `apex compose -p apex restart traefik`.
+Wrapper options precede the action. Exports derived APEX_* vars and layers env files.
 """
 import os
-from engine.descriptor import Arg, Flag, Meta, Opt, Rest
+import shlex
+
+from engine.descriptor import Flag, Meta, Opt, Rest
 
 METADATA = Meta(
     summary="Orchestrate docker compose across the node or on a specific composition.",
     args=[
         Opt("-p", "Target composition name or 'all'.", default=None),
         Flag("--dry-run", "Print commands only."),
-        Arg("action", "up | down | restart | ps | logs | ..."),
-        Rest("extra", "Extra args (target composition name, service names, or docker compose flags)."),
+        Rest("command", "ACTION [COMPOSE_ARGS...]; wrapper options must precede ACTION."),
     ],
 )
 
 
-def _clean_xray_sockets(ctx):
-    """Unlink stale host-side Xray sockets in /dev/shm to prevent REALITY panic crash loops."""
-    shm = os.path.join(ctx.paths.stier3, "apex", "xray", "shm")
-    if os.path.isdir(shm):
-        for f in os.listdir(shm):
-            if f.endswith(".sock"):
-                try:
-                    os.unlink(os.path.join(shm, f))
-                    ctx.log.info(f"Cleaned stale Xray socket: {f}")
-                except OSError as e:
-                    ctx.log.warn(f"Failed to unlink {f}: {e}")
-
-
 def run(ctx, args):
-    log, comp, action = ctx.log, ctx.paths.compositions, args.action
-    extra = [a for a in (args.extra or []) if a != "--dry-run"]
-    dry_run = args.dry_run or len(extra) != len(args.extra or [])
+    log, comp = ctx.log, ctx.paths.compositions
+    command = list(args.command)
+    if command and command[0] == "--":
+        command.pop(0)
+    if not command:
+        log.error("ACTION is required (up, down, restart, logs, ...).")
+        raise SystemExit(64)
+    action, extra = command[0], command[1:]
+    dry_run = args.dry_run
+    before_separator = extra[:extra.index("--")] if "--" in extra else extra
+    if any(arg in ("-p", "--dry-run") or arg.startswith("-p=")
+           or arg.startswith("--dry-run=") for arg in before_separator):
+        log.error("Wrapper options -p and --dry-run must precede ACTION; use -- for passthrough.")
+        raise SystemExit(64)
     env = dict(os.environ)
     env.update({k: v for k, v in ctx.vars().items() if k.startswith("APEX_")})
 
@@ -49,30 +48,24 @@ def run(ctx, args):
         ]
 
     target = getattr(args, "p", None)
-    if not target and extra:
-        first = extra[0]
-        if first == "all":
-            target = "all"
-            extra = extra[1:]
-        elif first in available:
-            target = first
-            extra = extra[1:]
-        elif not first.startswith("-"):
-            target = first
-            extra = extra[1:]
-        elif extra[-1] in available and len(extra) > 1:
-            target = extra[-1]
-            extra = extra[:-1]
+    if target is None and extra:
+        if extra[0] in ["all", *available]:
+            target, extra = extra[0], extra[1:]
+        elif action == "up" and len(extra) >= 2 and extra[0] == "-d":
+            # Preserve the documented `up -d apex` spelling without scanning flag values.
+            if extra[1] in ["all", *available]:
+                if len(extra) != 2:
+                    log.error("Use -p COMPOSITION before up when adding service arguments.")
+                    raise SystemExit(64)
+                target, extra = extra[1], ["-d"]
 
-    if not target:
+    if target is None:
         target = "all"
 
     if target != "all" and target not in available:
-        log.error(f"Unknown composition '{target}'. Available: {', '.join(sorted(available)) if available else 'none'}")
+        names = ", ".join(sorted(available)) if available else "none"
+        log.error(f"Unknown composition '{target}'. Available: {names}")
         raise SystemExit(1)
-
-    if action in ("up", "restart", "start") and target in ("all", "apex") and not dry_run:
-        _clean_xray_sockets(ctx)
 
     def sequence():
         if target != "all":
@@ -89,13 +82,13 @@ def run(ctx, args):
             if os.path.isfile(os.path.join(dirpath, ef)):
                 base += ["--env-file", ef]
         if action == "up":
-            up_flags = [] if "-d" in extra else ["-d"]
+            up_flags = [] if any(flag in extra for flag in ("-d", "--detach")) else ["-d"]
             cmd = base + ["up"] + up_flags + extra
         else:
             cmd = base + [action] + extra
 
         if dry_run:
-            log.info(f"[DRY-RUN] (cd {dirpath} && {' '.join(cmd)})")
+            log.info(f"[DRY-RUN] (cd {shlex.quote(dirpath)} && {shlex.join(cmd)})")
         else:
             log.info(f"{action} {name}...")
             ctx.sys.run(cmd, cwd=dirpath, env=env, check=True)

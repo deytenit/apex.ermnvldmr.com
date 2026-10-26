@@ -18,7 +18,7 @@ def run(ctx, args):
         ZoneInfo(zone)
     except (ValueError, ZoneInfoNotFoundError):
         ctx.log.error("configs/timezone must name an installed IANA timezone.")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     current = ctx.sys.run(["timedatectl", "show", "--property=Timezone", "--value"], capture=True).stdout.strip()
     if current == zone:
         ctx.log.info(f"Timezone already set to {zone}.")

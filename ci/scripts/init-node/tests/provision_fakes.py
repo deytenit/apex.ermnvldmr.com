@@ -1,4 +1,4 @@
-from engine.provisioning.security import SecurityError
+from provisioning.security import SecurityError
 
 
 class SecurityBoundary:

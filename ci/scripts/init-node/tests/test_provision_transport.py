@@ -10,10 +10,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from engine.provisioning.transport import (
+from provisioning.transport import (
     SSH, TransportError, HandoverUncertain, build_bundle, destination, local_file, protected_handover,
     initialize,
-    REMOTE_PATH_GUARD, remote_atomic_input,
+    remote_atomic_input,
 )
 
 
@@ -27,7 +27,7 @@ class TransportTests(unittest.TestCase):
                 stage = root / 'stage'
                 stage.mkdir()
                 installed = root / 'bundle'
-                seed = installed / 'engine/provisioning/seed.sh'
+                seed = installed / 'provisioning/seed.sh'
                 seed.parent.mkdir(parents=True)
                 seed.write_text('printf "seed\\n" >> "$APEX_TEST_EVENTS"\n')
                 binaries = root / 'bin'
@@ -55,7 +55,8 @@ if event == 'enroll':
                         pass
                     def resolve(self):
                         pass
-                    def run(self, script, data=None, **kwargs):
+                    def run(self, script, data=None, installed=installed, stage=stage,
+                            root=root, environment=environment, **kwargs):
                         value = b''
                         if 'ssh_host_' in script:
                             value = b'192.0.2.1 50000 192.0.2.2 22\nssh-ed25519 AAAA fixture\n'
@@ -71,9 +72,9 @@ if event == 'enroll':
                         elif script.startswith('if test -f /var/tmp'):
                             value = (stage / 'result').read_bytes()
                         return subprocess.CompletedProcess([], 0, value, b'')
-                with patch('engine.provisioning.transport.SSH', Remote), \
-                        patch('engine.provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
-                        patch('engine.provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
+                with patch('provisioning.transport.SSH', Remote), \
+                        patch('provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
+                        patch('provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
                     with self.assertRaises(TransportError):
                         initialize(root, 'root@example.com', source, progress=lambda message: None)
                 expected = ['seed', 'validate', 'access-preflight']
@@ -151,9 +152,9 @@ if event == 'enroll':
                 self.assertIn('ssh-ed25519 AAAA', transport.trust_file.read_text())
                 raise PreflightComplete
             transport = SSH('adam@example.com', runner=runner)
-            with patch('engine.provisioning.transport.SSH', return_value=transport), \
-                    patch('engine.provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
-                    patch('engine.provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
+            with patch('provisioning.transport.SSH', return_value=transport), \
+                    patch('provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
+                    patch('provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
                 with self.assertRaises(PreflightComplete):
                     initialize(root, 'adam@example.com', source, progress=lambda message: None)
             self.assertEqual(len(fallbacks), 1)
@@ -237,8 +238,8 @@ if event == 'enroll':
         self.assertEqual(calls, ['begin', 'fresh', 'finalize', 'fresh', 'commit'])
 
     def test_lost_commit_reply_is_reconciled_without_rolling_back_committed_access(self):
-        from engine.provisioning.access import Transition
-        from tests.test_provision_access import FakeHost
+        from provisioning.access import Transition
+        from test_provision_access import FakeHost
         with tempfile.TemporaryDirectory() as directory:
             host = FakeHost(Path(directory))
             transition = Transition(host, now=lambda: 1000, security=host.security)
@@ -277,17 +278,20 @@ if event == 'enroll':
         self.assertEqual(calls, ['begin', 'finalize', 'commit', 'status', 'rollback'])
 
     def test_lost_commit_reply_reports_verified_or_uncertain_resume_endpoints(self):
-        from engine.provisioning.access import Transition
-        from tests.test_provision_access import FakeHost
+        from provisioning.access import Transition
+        from test_provision_access import FakeHost
         for unreachable in (False, True):
             with self.subTest(unreachable=unreachable), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                source = root / 'user-data'
+                source = root / 'user data $literal'
                 source.write_bytes(b'opaque input')
+                identity = root / 'identity file'
+                identity.write_bytes(b'synthetic private identity')
                 host = FakeHost(root)
                 transition = Transition(host, now=lambda: 1000, security=host.security)
                 messages, commands = [], []
-                def runner(args, **kwargs):
+                def runner(args, commands=commands, transition=transition,
+                           unreachable=unreachable, **kwargs):
                     if '-G' in args:
                         return subprocess.CompletedProcess(args, 0, 'hostname 192.0.2.2\nport 22\n', '')
                     command = shlex.split(args[-1])
@@ -300,7 +304,7 @@ if event == 'enroll':
                         value = b'/var/tmp/apex-init.0123456789\n'
                     elif script.startswith('if test -f /var/tmp'):
                         value = b'0'
-                    elif script.startswith('cd ') and 'engine.provisioning.access' in script:
+                    elif script.startswith('cd ') and 'provisioning.access' in script:
                         access_args = shlex.split(script)[3:]
                         operation = access_args[3]
                         token = access_args[access_args.index('--token') + 1]
@@ -316,24 +320,28 @@ if event == 'enroll':
                         if unreachable:
                             return subprocess.CompletedProcess(args, 255, b'', b'connection lost')
                         value = json.dumps(transition.load()).encode()
-                    elif 'engine.provisioning.target complete' in script:
+                    elif 'provisioning.target complete' in script:
                         value = b'{"status": "complete"}'
                     return subprocess.CompletedProcess(args, 0, value, b'')
                 def transport(*args):
                     return SSH(*args, runner=runner)
-                with patch('engine.provisioning.transport.SSH', side_effect=transport), \
-                        patch('engine.provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
-                        patch('engine.provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
+                with patch('provisioning.transport.SSH', side_effect=transport), \
+                        patch('provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
+                        patch('provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
                     if unreachable:
                         with self.assertRaises(HandoverUncertain):
-                            initialize(root, 'debian@example.com', source, progress=messages.append)
+                            initialize(root, 'debian@example.com', source, identity_file=identity, progress=messages.append)
                         self.assertTrue(any('outcome is unknown' in message for message in messages))
                         self.assertIn('adam@example.com --port 2222', messages[-2])
                         self.assertIn('debian@example.com --port 22', messages[-1])
                         self.assertFalse(any('Safe resume' in message or 'pending rollback' in message for message in messages))
                     else:
-                        self.assertEqual(initialize(root, 'debian@example.com', source, progress=messages.append), {'status': 'complete'})
-                        self.assertIn('Safe resume: ./apex init adam@example.com --port 2222', messages[-1])
+                        self.assertEqual(initialize(root, 'debian@example.com', source, identity_file=identity, progress=messages.append), {'status': 'complete'})
+                        self.assertIn('Safe resume: python3 ci/scripts/init-node.py adam@example.com --port 2222', messages[-1])
+                resume = shlex.split(messages[-1].split(': ', 1)[1])
+                self.assertEqual(resume[:2], ['python3', 'ci/scripts/init-node.py'])
+                self.assertEqual(resume[resume.index('--user-data') + 1], str(source.resolve()))
+                self.assertEqual(resume[resume.index('--identity-file') + 1], str(identity.resolve()))
                 self.assertEqual(transition.load()['status'], 'committed')
                 self.assertFalse(host.armed)
                 self.assertFalse(any('access rollback' in script for script in commands))
@@ -341,29 +349,64 @@ if event == 'enroll':
     def test_bundle_excludes_repository_and_environment_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'engine/provisioning').mkdir(parents=True)
-            (root / 'engine/__init__.py').write_text('')
-            (root / 'engine/provisioning/seed.sh').write_text('#!/bin/sh\n')
+            (root / 'ci/scripts/init-node/provisioning').mkdir(parents=True)
+            (root / 'ci/scripts/init-node/provisioning/__init__.py').write_text('')
+            (root / 'ci/scripts/init-node/provisioning/seed.sh').write_text('#!/bin/sh\n')
             (root / '.env').write_text('private secret')
-            (root / 'engine/private.env').write_text('private secret')
+            (root / 'ci/scripts/init-node/provisioning/private.env').write_text('private secret')
             data, digest, revision = build_bundle(root)
             with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-                self.assertEqual(set(archive.getnames()), {'engine/__init__.py', 'engine/provisioning/seed.sh'})
+                self.assertEqual(set(archive.getnames()), {'provisioning/__init__.py', 'provisioning/seed.sh'})
             self.assertNotIn(b'private secret', data)
             self.assertEqual(build_bundle(root)[1], digest)
+
+    def test_real_archive_runs_without_engine_or_site_packages(self):
+        commons = Path(__file__).resolve().parents[4]
+        data, digest, revision = build_bundle(commons)
+        self.assertEqual(build_bundle(commons)[1], digest)
+        with tempfile.TemporaryDirectory() as directory:
+            with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+                names = archive.getnames()
+                self.assertTrue(names)
+                self.assertTrue(all(name.startswith('provisioning/') for name in names))
+                self.assertIn('provisioning/__init__.py', names)
+                self.assertIn('provisioning/seed.sh', names)
+                archive.extractall(directory, filter='data')
+            environment = dict(os.environ)
+            environment.pop('PYTHONPATH', None)
+            for module in ('provisioning.target', 'provisioning.access', 'provisioning.image'):
+                with self.subTest(module=module):
+                    result = subprocess.run([sys.executable, '-S', '-m', module, '--help'],
+                                            cwd=directory, env=environment, capture_output=True,
+                                            text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('usage:', result.stdout)
+
+    def test_bundle_rejects_symlinked_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'ci/scripts/init-node/provisioning'
+            package.mkdir(parents=True)
+            (package / '__init__.py').write_text('')
+            (package / 'seed.sh').write_text('#!/bin/sh\n')
+            outside = root / 'outside.py'
+            outside.write_text('private = True\n')
+            (package / 'target.py').symlink_to(outside)
+            with self.assertRaisesRegex(TransportError, 'unsafe source path'):
+                build_bundle(root)
 
     def test_missing_input_is_a_safe_validation_error(self):
         with self.assertRaises(TransportError):
             local_file('/nonexistent/apex-user-data', 'User-data')
 
-    def test_init_from_node_checkout_does_not_resolve_local_identity(self):
-        from engine import cli
-        root = Path(__file__).resolve().parents[1]
-        with patch.object(cli, '_resolve_layout', return_value=(str(root), str(root), None, True)), \
-                patch.object(cli, 'resolve', side_effect=AssertionError('local identity used')):
-            with self.assertRaises(SystemExit) as caught:
-                cli.main(['init', '--help'])
-        self.assertEqual(caught.exception.code, 0)
+    def test_standalone_help_runs_without_engine_or_yaml_imports(self):
+        launcher = Path(__file__).resolve().parents[2] / 'init-node.py'
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, '-S', str(launcher), '--help'],
+                                    cwd=directory, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--user-data', result.stdout)
+        self.assertIn('--identity-file', result.stdout)
 
     def test_dead_enrollment_unit_stops_polling_and_removes_input(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -389,9 +432,9 @@ if event == 'enroll':
                         value = b''
                     return subprocess.CompletedProcess([], 0, value, b'')
             messages = []
-            with patch('engine.provisioning.transport.SSH', Remote), \
-                    patch('engine.provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
-                    patch('engine.provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
+            with patch('provisioning.transport.SSH', Remote), \
+                    patch('provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
+                    patch('provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
                 with self.assertRaises(TransportError) as caught:
                     initialize(root, 'root@example.com', source, progress=messages.append)
             self.assertIn('/runner.log', str(caught.exception))
@@ -416,16 +459,16 @@ if event == 'enroll':
                         value = b'/var/tmp/apex-init.0123456789\n'
                     elif script.startswith('if test -f /var/tmp'):
                         value = b'0'
-                    elif 'engine.provisioning.target complete' in script:
+                    elif 'provisioning.target complete' in script:
                         raise TransportError('record failed')
                     else:
                         value = b''
                     return subprocess.CompletedProcess([], 0, value, b'')
             messages = []
-            with patch('engine.provisioning.transport.SSH', Remote), \
-                    patch('engine.provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
-                    patch('engine.provisioning.transport.protected_handover'), \
-                    patch('engine.provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
+            with patch('provisioning.transport.SSH', Remote), \
+                    patch('provisioning.transport.build_bundle', return_value=(b'bundle', 'a' * 64, 'b' * 40)), \
+                    patch('provisioning.transport.protected_handover'), \
+                    patch('provisioning.transport.shutil.which', return_value='/usr/bin/ssh'):
                 with self.assertRaises(TransportError):
                     initialize(root, 'root@example.com', source, progress=messages.append)
             self.assertIn('adam@example.com --port 2222', messages[-1])

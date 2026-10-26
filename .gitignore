@@ -9,6 +9,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.venv/
 
 # Runtime / secrets (never in commons)
 *.log

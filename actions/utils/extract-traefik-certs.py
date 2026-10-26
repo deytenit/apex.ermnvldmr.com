@@ -33,4 +33,4 @@ def run(ctx, args):
         ctx.notify.success(TITLE, url, f"Certificates extracted for {node}")
     except Exception as e:
         log.error(str(e)); ctx.notify.error(TITLE, url, f"cert extraction failed: {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from e

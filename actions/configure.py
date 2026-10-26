@@ -21,7 +21,7 @@ def run(ctx, args):
         mod = overlay.load_module(r.path, "apex_umbrella_" + name.replace("/", "_"))
         if getattr(mod, "DISABLED", None):
             ctx.log.warn(f"Skipping disabled {name}"); continue
-        meta = getattr(mod, "METADATA")
+        meta = mod.METADATA
         has_dry = any(getattr(a, "name", None) == "--dry-run" for a in meta.args)
         argv = ["--dry-run"] if (args.dry_run and has_dry) else []
         sub_args = build_parser(meta, f"apex {name}").parse_args(argv)

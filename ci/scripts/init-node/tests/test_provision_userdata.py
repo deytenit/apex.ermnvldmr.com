@@ -1,8 +1,8 @@
 import importlib.util
 import unittest
 
-from engine.provisioning.contract import ContractError
-from engine.provisioning.userdata import decode_user_data
+from provisioning.contract import ContractError
+from provisioning.userdata import decode_user_data
 
 
 @unittest.skipUnless(importlib.util.find_spec('yaml'), 'target-only python3-yaml is unavailable')
@@ -21,7 +21,7 @@ class UserDataTests(unittest.TestCase):
 
     def test_normal_supported_document(self):
         import yaml
-        from tests.test_provision_contract import example
+        from test_provision_contract import example
         spec = decode_user_data(yaml.safe_dump(example()).encode())
         self.assertEqual(spec.hostname, 'metis.a1.example.com')
 

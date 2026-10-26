@@ -6,10 +6,10 @@ Ports root_template_crontab (install + rollback) and the ufw block-injection log
 """
 from __future__ import annotations
 
+import inspect
+import json
 import os
-import shutil
 import subprocess
-import tempfile
 import time
 from typing import List, Optional, Sequence, Tuple
 
@@ -55,10 +55,72 @@ def apply_block(text: str, content: str, start: str, end: str,
     return "\n".join(result) + "\n", inserted
 
 
+def _atomic_write(path, content, mode):
+    """Self-contained so sudo executes the same operation without importing user code."""
+    import os
+    import stat
+    import tempfile
+
+    target = os.path.realpath(path)
+    parent = os.path.dirname(target)
+    try:
+        previous = os.stat(target)
+    except FileNotFoundError:
+        previous = None
+    if previous is not None and not stat.S_ISREG(previous.st_mode):
+        raise ValueError(f"Not a regular file: {path}")
+    target_mode = (int(mode, 8) if mode is not None else
+                   stat.S_IMODE(previous.st_mode) if previous is not None else 0o644)
+    os.makedirs(parent, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".apex-", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+            stream.flush()
+            if previous is not None:
+                current = os.fstat(stream.fileno())
+                if (current.st_uid, current.st_gid) != (previous.st_uid, previous.st_gid):
+                    os.fchown(stream.fileno(), previous.st_uid, previous.st_gid)
+            os.fchmod(stream.fileno(), target_mode)
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _atomic_backup(path, destination):
+    import os
+    import shutil
+    import tempfile
+
+    destination = os.path.abspath(destination)
+    fd, temporary = tempfile.mkstemp(prefix=".apex-", dir=os.path.dirname(destination))
+    os.close(fd)
+    try:
+        shutil.copyfile(path, temporary)
+        previous, current = os.stat(path), os.stat(temporary)
+        if (current.st_uid, current.st_gid) != (previous.st_uid, previous.st_gid):
+            os.chown(temporary, previous.st_uid, previous.st_gid)
+        shutil.copystat(path, temporary)
+        os.replace(temporary, destination)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 class Host:
     def __init__(self, log, sys_):
         self.log = log
         self.sys = sys_
+
+    def _file_operation(self, operation, args, sudo):
+        if sudo:
+            script = (inspect.getsource(operation) + "\nimport json, sys\n" +
+                      f"{operation.__name__}(*json.load(sys.stdin))\n")
+            self.sys.sudo(["python3", "-I", "-c", script], input=json.dumps(args))
+        else:
+            operation(*args)
 
     # --- read/write with sudo awareness ---
     def _read(self, path: str, sudo: bool = False) -> str:
@@ -74,10 +136,7 @@ class Host:
         if not exists:
             return None
         bkp = f"{path}.{int(time.time())}.bak"
-        if sudo:
-            self.sys.sudo(["cp", "-a", path, bkp])
-        else:
-            shutil.copy2(path, bkp)
+        self._file_operation(_atomic_backup, [path, bkp], sudo)
         self.log.info(f"Backed up {path} -> {bkp}")
         return bkp
 
@@ -88,22 +147,7 @@ class Host:
             return
         if backup:
             self.backup(path, sudo=sudo)
-        fd, tmp_name = tempfile.mkstemp(prefix="apex-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-                tmp.write(content)
-            target_mode = mode or "0644"
-            if sudo:
-                self.sys.sudo(["mkdir", "-p", os.path.dirname(path)])
-                self.sys.sudo(["cp", tmp_name, path])
-                self.sys.sudo(["chmod", target_mode, path])
-            else:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                shutil.copyfile(tmp_name, path)
-                os.chmod(path, int(target_mode, 8))
-        finally:
-            if os.path.exists(tmp_name):
-                os.unlink(tmp_name)
+        self._file_operation(_atomic_write, [path, content, mode], sudo)
         self.log.success(f"Wrote {path}")
 
     def inject_block(self, target: str, content: str, start: str, end: str,

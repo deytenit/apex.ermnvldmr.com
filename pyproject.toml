@@ -6,13 +6,22 @@ readme = "README.md"
 license = { text = "BSD-2-Clause" }
 requires-python = ">=3.10"
 
+[project.optional-dependencies]
+dev = ["ruff==0.17.2", "PyYAML>=6.0,<7"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S"]
-ignore = ["S603", "S607"]  # Subprocess invocations are mediated via ctx.sys
+# Existing formatting and typing modernization are outside correctness checks.
+# Subprocess arguments are constructed explicitly; no implicit shell execution.
+ignore = ["E401", "E501", "E702", "E741", "I001", "UP006", "UP035", "UP045", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+# These tests use synthetic paths; no fixed temporary path is written.
+"ci/scripts/init-node/tests/test_provision_transport.py" = ["S108"]
 
 [tool.mypy]
 python_version = "3.10"

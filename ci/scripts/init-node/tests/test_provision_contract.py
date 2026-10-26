@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from engine.provisioning.contract import ContractError, normalize_user_data, parse_bootstrap_env
+from provisioning.contract import ContractError, normalize_user_data, parse_bootstrap_env
 
 
 def example():

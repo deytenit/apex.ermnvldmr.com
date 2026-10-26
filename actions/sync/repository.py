@@ -61,4 +61,4 @@ def run(ctx, args):
     except Exception as e:
         log.error(f"{type(e).__name__}: {e}")
         ctx.notify.error(TITLE, url, f"Sync failed: {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from e

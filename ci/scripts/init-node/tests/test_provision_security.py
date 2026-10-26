@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from engine.provisioning.access import Host
-from engine.provisioning import security
+from provisioning.access import Host
+from provisioning import security
 
 
 # Pinned helper default output, kept independent of the adapter's validation code.
@@ -97,7 +97,7 @@ class SecurityHost(Host):
             path = self.path(name)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-        self.conffiles = {'/etc/default/ufw': hashlib.md5(contents['/etc/default/ufw'].encode()).hexdigest()}
+        self.conffiles = {'/etc/default/ufw': hashlib.md5(contents['/etc/default/ufw'].encode(), usedforsecurity=False).hexdigest()}
         self.bouncer_conffiles = {}
         checksums = []
         for name, content in contents.items():
@@ -108,7 +108,7 @@ class SecurityHost(Host):
             path = self.path(template)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-            checksums.append(hashlib.md5(content.encode()).hexdigest() + '  ' + template.lstrip('/'))
+            checksums.append(hashlib.md5(content.encode(), usedforsecurity=False).hexdigest() + '  ' + template.lstrip('/'))
         manifest = self.path('/var/lib/dpkg/info/ufw.md5sums')
         manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text('\n'.join(checksums) + '\n')
@@ -275,7 +275,7 @@ class SecurityTests(unittest.TestCase):
         path = self.host.path(name)
         path.parent.mkdir(parents=True)
         path.write_text('[Service]\nExecStart=/usr/bin/crowdsec-firewall-bouncer\n')
-        self.host.bouncer_conffiles[name] = hashlib.md5(path.read_bytes()).hexdigest()
+        self.host.bouncer_conffiles[name] = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
         self.host.services['crowdsec-firewall-bouncer']['FragmentPath'] = name
         state = self.prepared()
         self.adapter.activate(state, self.persist)
@@ -535,7 +535,7 @@ class SecurityTests(unittest.TestCase):
     def test_disabled_ipv6_runtime_is_preserved_during_helper_cleanup(self):
         path = self.host.path('/etc/default/ufw')
         path.write_text(path.read_text().replace('IPV6=yes', 'IPV6=no'))
-        self.host.conffiles['/etc/default/ufw'] = hashlib.md5(path.read_bytes()).hexdigest()
+        self.host.conffiles['/etc/default/ufw'] = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
         before = copy.deepcopy(self.host.runtime_chains)
         state = self.prepared()
         self.adapter.activate(state, self.persist)
@@ -828,7 +828,7 @@ class SecurityTests(unittest.TestCase):
     def test_ipv6_peer_requires_ipv6_firewall_support(self):
         path = self.host.path('/etc/default/ufw')
         path.write_text(path.read_text().replace('IPV6=yes', 'IPV6=no'))
-        self.host.conffiles['/etc/default/ufw'] = hashlib.md5(path.read_bytes()).hexdigest()
+        self.host.conffiles['/etc/default/ufw'] = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
         with self.assertRaises(security.SecurityError):
             self.adapter.snapshot(self.adapter.preflight(), 22, '2001:db8::1')
 

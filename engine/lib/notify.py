@@ -73,7 +73,7 @@ class Notify:
         data = urllib.parse.urlencode({"parse_mode": "HTML", "text": text}).encode()
         self.log.info(f"Sending Telegram notification ({level}): {title}")
         try:
-            with urllib.request.urlopen(urllib.request.Request(bot_url, data=data),
+            with urllib.request.urlopen(urllib.request.Request(bot_url, data=data),  # noqa: S310 -- HTTPS validated above.
                                         timeout=NOTIFY_TIMEOUT) as r:
                 r.read()
             return True

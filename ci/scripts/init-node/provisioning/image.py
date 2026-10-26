@@ -16,9 +16,9 @@ from .target import preflight, run
 
 
 def install():
-    from .transport import build_bundle
-    source = Path(__file__).resolve().parents[2]
-    data, digest, _ = build_bundle(source)
+    from .transport import _bundle_from_source
+    source = Path(__file__).resolve().parents[1]
+    data, digest = _bundle_from_source(source)
     destination = safe_path(Path('/usr/local/lib/apex-provisioner') / digest)
     destination.mkdir(mode=0o755, parents=True, exist_ok=False)
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
@@ -29,7 +29,7 @@ def install():
     atomic_write('/etc/apex/provisioner.json', json.dumps(metadata) + '\n')
     for executable, operation in (('apex-provision-image', ''), ('apex-bootstrap', 'cloud-enroll ')):
         content = ('#!/bin/sh\nset -eu\ncd ' + str(destination) + '\n'
-                   'exec /usr/bin/python3 -m engine.provisioning.image ' + operation + '"$@"\n')
+                   'exec /usr/bin/python3 -m provisioning.image ' + operation + '"$@"\n')
         atomic_write('/usr/local/bin/' + executable, content, 0o755)
     return metadata
 
@@ -84,7 +84,7 @@ def sanitize_files(root=Path('/')):
         dbus.unlink()
     dbus.parent.mkdir(parents=True, exist_ok=True)
     dbus.symlink_to('/etc/machine-id')
-    for name in ('var/lib/apex-init', 'tmp/engine', 'var/lib/cloud'):
+    for name in ('var/lib/apex-init', 'tmp/provisioning', 'var/lib/cloud'):
         path = root / name
         if path.is_symlink():
             path.unlink()

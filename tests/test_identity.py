@@ -1,6 +1,6 @@
 # tests/test_identity.py
 import os, tempfile, unittest
-from engine.identity import resolve, Node
+from engine.identity import resolve
 
 class TestIdentity(unittest.TestCase):
     def _envfile(self, text):

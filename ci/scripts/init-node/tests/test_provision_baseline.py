@@ -2,14 +2,13 @@
 import hashlib
 import importlib.util
 import io
-import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from engine.provisioning import baseline
+from provisioning import baseline
 
 
 class Host:

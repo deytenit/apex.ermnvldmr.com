@@ -23,7 +23,8 @@ def decode_user_data(content):
     if len(content) > 1024 * 1024:
         raise ContractError('user-data exceeds the supported size')
     try:
-        document = yaml.load(content, Loader=Loader)
+        # Loader extends SafeLoader only to reject aliases and duplicate keys.
+        document = yaml.load(content, Loader=Loader)  # noqa: S506
     except (yaml.YAMLError, UnicodeError, RecursionError):
         raise ContractError('invalid or unsupported YAML user-data') from None
     return normalize_user_data(document)

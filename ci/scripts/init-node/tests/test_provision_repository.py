@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from engine.provisioning.contract import Enrollment, Repository
-from engine.provisioning.repository import reconcile_repository
-from engine.provisioning.state import ProvisionError
+from provisioning.contract import Enrollment, Repository
+from provisioning.repository import reconcile_repository
+from provisioning.state import ProvisionError
 
 
 class RepositoryTests(unittest.TestCase):
@@ -43,11 +43,11 @@ class RepositoryTests(unittest.TestCase):
         self.spec = Enrollment('metis.example.com', Repository('metis', str(self.upstream), None), (), (), ())
         self.state = {}
         self.saved = []
-        self.account = patch('engine.provisioning.repository.pwd.getpwnam',
+        self.account = patch('provisioning.repository.pwd.getpwnam',
                              return_value=SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir=str(self.home)))
         self.account.start()
         self.addCleanup(self.account.stop)
-        self.runner = patch('engine.provisioning.repository.as_adam', side_effect=self.local_run)
+        self.runner = patch('provisioning.repository.as_adam', side_effect=self.local_run)
         self.runner.start()
         self.addCleanup(self.runner.stop)
 

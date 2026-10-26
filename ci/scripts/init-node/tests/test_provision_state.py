@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from engine.provisioning.state import (Journal, ProvisionError, atomic_write,
+from provisioning.state import (Journal, ProvisionError, atomic_write,
                                       check_heartbeat, exclusive_lock)
 
 

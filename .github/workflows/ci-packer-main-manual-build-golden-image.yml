@@ -23,12 +23,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Developer Dependencies
+        run: python3 -m pip install ruff==0.17.2 "PyYAML>=6.0,<7"
+
       - name: Validate Shell Script Syntax
         run: |
-          for script in ci/packer/scripts/*.sh engine/provisioning/seed.sh; do
+          for script in ci/packer/scripts/*.sh ci/scripts/init-node/provisioning/seed.sh; do
             bash -n "$script"
           done
-          bash tests/run.sh
+          make check
 
       - name: Setup Packer
         uses: hashicorp/setup-packer@main

@@ -45,7 +45,7 @@ def _runtime_rule(line):
     if len(tokens) % 2:
         raise SecurityError('Unsupported runtime firewall rule')
     pairs = []
-    for key, value in zip(tokens[::2], tokens[1::2]):
+    for key, value in zip(tokens[::2], tokens[1::2], strict=True):
         if key in ('-s', '-d'):
             value = str(ipaddress.ip_network(value, strict=False))
         elif key == '--ctstate':
@@ -77,7 +77,7 @@ class Security:
         if not active:
             output = self.host.command(['dpkg-query', '-W', '-f=${Conffiles}', 'ufw']).stdout
             conffiles = dict(re.findall(r'^\s*(/\S+)\s+([a-f0-9]{32})(?:\s|$)', output, re.M))
-            pristine = (hashlib.md5(base64.b64decode(files['/etc/default/ufw']['data'])).hexdigest()
+            pristine = (hashlib.md5(base64.b64decode(files['/etc/default/ufw']['data']), usedforsecurity=False).hexdigest()
                         == conffiles.get('/etc/default/ufw'))
             manifest = dict((name, digest) for digest, name in re.findall(
                 r'^([a-f0-9]{32})\s+(\S+)\s*$', self._text('/var/lib/dpkg/info/ufw.md5sums'), re.M))
@@ -86,7 +86,7 @@ class Security:
                 filename = name.rsplit('/', 1)[1]
                 template = '/usr/share/ufw/' + ('' if filename == 'ufw.conf' else 'iptables/') + filename
                 data = self._path(template).read_bytes()
-                pristine = pristine and (hashlib.md5(data).hexdigest() == manifest.get(template.lstrip('/'))
+                pristine = pristine and (hashlib.md5(data, usedforsecurity=False).hexdigest() == manifest.get(template.lstrip('/'))
                                          and data == base64.b64decode(files[name]['data']))
             if not pristine:
                 raise SecurityError('Inactive UFW is not provably pristine; reconcile its existing policy first')
@@ -111,7 +111,7 @@ class Security:
         output = self.host.command(['dpkg-query', '-W', '-f=${Conffiles}',
                                     'crowdsec-firewall-bouncer-iptables']).stdout
         conffiles = dict(re.findall(r'^\s*(/\S+)\s+([a-f0-9]{32})(?:\s|$)', output, re.M))
-        return hashlib.md5(self._path(path).read_bytes()).hexdigest() == conffiles.get(path)
+        return hashlib.md5(self._path(path).read_bytes(), usedforsecurity=False).hexdigest() == conffiles.get(path)
 
     def _path(self, name):
         path = self.host.path(name)
