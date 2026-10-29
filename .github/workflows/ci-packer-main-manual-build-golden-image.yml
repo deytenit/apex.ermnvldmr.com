@@ -104,7 +104,7 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.STATIC_AWS_ACCESS_KEY_ID || secrets.COM_ERMNVLDMR_STATIC_AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.STATIC_AWS_SECRET_ACCESS_KEY || secrets.COM_ERMNVLDMR_STATIC_AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.STATIC_AWS_REGION || secrets.COM_ERMNVLDMR_STATIC_S3_REGION || 'us-east-1' }}
+          AWS_DEFAULT_REGION: ${{ secrets.STATIC_AWS_REGION || secrets.COM_ERMNVLDMR_STATIC_S3_REGION || 'auto' }}
           S3_ENDPOINT: ${{ secrets.STATIC_S3_ENDPOINT_URL || secrets.COM_ERMNVLDMR_STATIC_S3_ENDPOINT_URL }}
           S3_BUCKET: ${{ secrets.STATIC_S3_BUCKET || secrets.COM_ERMNVLDMR_STATIC_S3_BUCKET }}
           IMAGE_NAME: ${{ needs.build-image.outputs.image_name }}
