@@ -61,7 +61,7 @@ build {
   sources = ["source.qemu.apex_debian"]
 
   provisioner "file" {
-    source      = "engine"
+    source      = "ci/scripts/init-node/provisioning"
     destination = "/tmp/"
   }
 
@@ -69,8 +69,8 @@ build {
     execute_command = "sudo -n sh -c '{{ .Vars }} {{ .Path }}'"
     environment_vars = ["APEX_PROVISION_REVISION=${var.provision_revision}"]
     inline = [
-      "bash /tmp/engine/provisioning/seed.sh",
-      "cd /tmp && python3 -m engine.provisioning.image install"
+      "bash /tmp/provisioning/seed.sh",
+      "cd /tmp && python3 -m provisioning.image install"
     ]
   }
 
@@ -79,6 +79,7 @@ build {
     scripts = [
       "ci/packer/scripts/01-base-system.sh",
       "ci/packer/scripts/02-storage-docker.sh",
+      "ci/packer/scripts/02-alloy-package.sh",
       "ci/packer/scripts/03-bootstrap-helper.sh",
       "ci/packer/scripts/04-cleanup.sh"
     ]
