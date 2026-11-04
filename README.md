@@ -47,7 +47,7 @@ You should understand the following invariants before exploring the codebase:
 - **[`compositions/`](./compositions)**: The shared core Compose stack (`traefik`, `socket-proxy`, `alloy`, `adguard`, `xray`, `restic`).
 - **[`engine/`](./engine)**: Framework engine — action discovery, overlay resolution, context injection, and logging.
 - **[`etc/`](./etc)**: Shared static configuration, including Alloy.
-- **[`ci/`](./ci)**: Host image build recipes, cloud-init templates, and standalone Debian enrollment tooling.
+- **[`ci/`](./ci)**: Host image build recipes, cloud-init templates, and image enrollment tooling.
 - **[`assets/`](./assets)**: Repository branding assets (`logo.png`).
 
 ---
@@ -104,18 +104,19 @@ Choose one output mode per invocation.
 
 ### Infrastructure Administrator
 
-Bootstrapping clean Debian 13 hosts on bare metal or cloud providers without cloud-init support.
+Build Debian 13 amd64 golden images with Packer, then supply node identity,
+operator keys, and the node repository through
+[`ci/cloud-init/user-data.template.yaml`](./ci/cloud-init/user-data.template.yaml)
+at first boot. Keep filled user-data and repository credentials outside Git.
 
-- **Initialization Tool**: A standalone workstation bootstrap tool targets clean Debian 13 amd64 installations using the same baseline as Packer.
-- **Template**: Copy and fill out [`ci/cloud-init/user-data.template.yaml`](./ci/cloud-init/user-data.template.yaml) with target identity, operator keys, and node repository.
-- **Run Enrollment**:
-  ```sh
-  python3 ci/scripts/init-node.py root@server --user-data /private/path/location.user-data.yaml
-  ```
-- **Prerequisites**: Run from this commons checkout with Python 3.10+ and OpenSSH. The target must be Debian 13 amd64, reachable using a trusted SSH host key as root or an administrator with passwordless `sudo`. The node checkout must declare `APEX_ENROLLMENT_INTERFACE=1` and have a matching enrollment-aware `init.sh`. Use the supported template subset, not arbitrary cloud-config directives. Keep filled user-data and repository credentials outside Git; supply trusted repository host keys for SSH clones.
-- **Bootstrap Dependencies**: The target seed installs distro `python3-yaml` for user-data validation; this is separate from the standard-library APEX core. ZFS setup needs matching running-kernel headers/modules. A mismatch stops with a diagnosis; enrollment does not reboot automatically.
-- **Security Handover**: Safely switches SSH to key-only authentication on port 2222 (`adam@server`) protected by an automated rollback watchdog, activates UFW firewall rules, Docker iptables integration, and CrowdSec.
-- **Resuming**: Follow the emitted standalone resume command. After committed access handover, use `python3 ci/scripts/init-node.py adam@server --port 2222 --user-data /private/path/location.user-data.yaml`; before handover, use the bootstrap endpoint after pending rollback. An uncertain handover requires checking which endpoint is active. Preserve any `--identity-file` option. Core `apex` has no remote `init` action.
+```sh
+packer init ci/packer/apex-debian-13.pkr.hcl
+packer validate ci/packer/apex-debian-13.pkr.hcl
+packer build ci/packer/apex-debian-13.pkr.hcl
+```
+
+Cloud-init runs the image's bundled enrollment helper. After enrollment, run
+`apex configure` and `apex compose up` on the node.
 
 ### Developer & Contributor
 
@@ -129,9 +130,9 @@ Adding shared actions or improving the engine.
   . .venv/bin/activate
   python3 -m pip install ruff==0.17.2 'PyYAML>=6.0,<7'
   ```
-- **Verification**: `make check` runs lint and both the core and standalone provisioning suites. `make test` (or `bash tests/run.sh`) runs both suites; discovery limited to `tests/` omits provisioning. PyYAML is needed for the provisioning tests, not core execution. Environment integration tests use `docker compose` or standalone `docker-compose` with `config`; no daemon is needed.
+- **Verification**: `make check` runs lint and both the core and image provisioning suites. `make test` (or `bash tests/run.sh`) runs both suites; discovery limited to `tests/` omits provisioning. PyYAML is needed for the provisioning tests, not core execution. Environment integration tests use `docker compose` or standalone `docker-compose` with `config`; no daemon is needed.
 - **Linting**: Ruff checks correctness and security rules. Existing import-order, line-length, compact-statement, and annotation-style debt is explicitly deferred in `pyproject.toml` to avoid unrelated formatting changes. Without Ruff, `make lint` recursively checks Python compilation and fails on syntax errors; that fallback is not equivalent to Ruff. `make fmt` formats files and is a separate, deliberate operation.
-- **Packer**: Run `packer init ci/packer/apex-debian-13.pkr.hcl` and `packer validate ci/packer/apex-debian-13.pkr.hcl` for template validation. A VM build or live enrollment is a separate operation; unit tests and template validation do not demonstrate a deployed host.
+- **Packer**: Run `packer init ci/packer/apex-debian-13.pkr.hcl` and `packer validate ci/packer/apex-debian-13.pkr.hcl` for template validation. A VM build or first-boot enrollment is a separate operation; unit tests and template validation do not demonstrate a deployed host.
 
 ---
 

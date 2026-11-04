@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from provisioning import access, image
 from provisioning.image import cloud_enroll, sanitize_files
-from provisioning.transport import build_bundle
+from provisioning.bundle import build_bundle
 from provisioning.state import atomic_write, safe_path
 from provisioning.state import ProvisionError
 
