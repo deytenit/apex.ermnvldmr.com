@@ -12,8 +12,6 @@ def run(ctx, args):
     log, s = ctx.log, ctx.sys
     repo = ctx.paths.repo_root
     rc_ip = _validate_anchor_ips(ctx)
-    if not shutil.which("docker"):
-        log.error("docker is not installed or not in PATH."); return rc_ip or 1
 
     files_string, targets = "", ["."]
     if args.hook:
@@ -24,6 +22,9 @@ def run(ctx, args):
         if not files_string:
             log.info("No staged docker-compose files to lint."); return rc_ip
         targets = [f"/workdir/{f}" for f in files_string.splitlines()]
+
+    if not shutil.which("docker"):
+        log.error("docker is not installed or not in PATH."); return rc_ip or 1
 
     log.info("Running dclint --fix (via docker)...")
     env_args = []
