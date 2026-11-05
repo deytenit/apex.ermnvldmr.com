@@ -10,12 +10,12 @@ Local infrastructure operations for independently owned nodes, with a Python sta
 
 - **Live Documentation**: <https://docs.ermnvldmr.com/en/apex/> (also available in [Russian](https://docs.ermnvldmr.com/ru/apex/))
 - **Getting Started Guide**: <https://docs.ermnvldmr.com/en/apex/getting-started/>
-- **Report an Issue**: <https://github.com/deytenit/apex.ermnvldmr.com/issues>
+- **Report an Issue**: <https://git.ermnvldmr.com/deytenit/apex.ermnvldmr.com/issues>
 - **License**: [BSD-2-Clause](#copyright--license)
 
 ```sh
 # Clone your node's repository (which pins apex as commons/)
-git clone --recurse-submodules git@github.com:you/selfhost.example.com.git
+git clone --recurse-submodules ssh://git@git.example.com:22222/infrastructure/selfhost.example.com.git
 cd selfhost.example.com && ./init.sh && source ~/.bashrc
 
 # Configure node identity
@@ -138,7 +138,7 @@ Adding shared actions or improving the engine.
 
 ## Communication & Support
 
-- **Issues**: <https://github.com/deytenit/apex.ermnvldmr.com/issues>
+- **Issues**: <https://git.ermnvldmr.com/deytenit/apex.ermnvldmr.com/issues>
 - **Email**: <personal@ermnvldmr.com>
 
 ## Copyright & License

@@ -1,5 +1,5 @@
 # actions/backup/run.py
-"""Label-driven restic backup via resticontainer (github.com/deytenit/resticontainer).
+"""Label-driven restic backup via resticontainer (git.ermnvldmr.com/deytenit/resticontainer).
 Runs the resticontainer core service one-shot: init-if-needed -> backup (discovers
 `restic.*`-labelled services, runs their pre-hooks/stops, snapshots the union of the
 resolved host paths in a single restic run) -> forget --prune -> Telegram. Every

@@ -29,7 +29,7 @@ class NativeAlloy(unittest.TestCase):
         self.ctx.sys.sudo.assert_not_called()
 
     def test_invalid_role_or_environment_path_cannot_change_service(self):
-        for role, path in [('unknown', '/etc/alloy/secrets'), ('host', '/tmp/file\nUser=root')]:
+        for role, path in [('unknown', '/etc/alloy/secrets'), ('host', '/etc/alloy/invalid\nUser=root')]:
             self.configure(role=role, environment_file=path)
             with self.assertRaises(ValueError):
                 alloy.run(self.ctx, SimpleNamespace(dry_run=False))

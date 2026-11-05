@@ -19,7 +19,7 @@ write_files:
     permissions: '0600'
     content: |
       APEX_REPO_NAME="node1.example.com"
-      APEX_REPO_URL="https://github.com/you/node1.example.com.git"
+      APEX_REPO_URL="https://git.example.com/infrastructure/node1.example.com.git"
       APEX_TIER1_MODE="directory"
       APEX_TIER1_DEVICE=""
       APEX_TIER2_MODE="directory"
