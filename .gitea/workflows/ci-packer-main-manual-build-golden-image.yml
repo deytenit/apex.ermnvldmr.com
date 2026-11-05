@@ -1,0 +1,179 @@
+name: ci/packer - main/manual-build-golden-image
+'on':
+  workflow_dispatch:
+    inputs:
+      upload_s3:
+        description: Upload built image to specified static S3 Object Storage
+        type: boolean
+        default: true
+concurrency:
+  group: ci-golden-image
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  validate-scripts:
+    name: 'Validate: Provisioner Scripts'
+    runs-on: apex-debian13
+    steps:
+    - name: Checkout repository
+      run: "set -euo pipefail\ncase \"$CHECKOUT_REF\" in -*) exit 1;; esac\nGITHUB_SERVER_URL=${GITHUB_SERVER_URL%/}\n\
+        case \"$GITHUB_SERVER_URL\" in https://git.ermnvldmr.com) ;; *) exit 1;; esac\n\
+        AUTH=$(printf 'deytenit:%s' \"$CHECKOUT_TOKEN\" | base64 -w0)\nHEADER=\"http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION:\
+        \ basic $AUTH\"\ngit init \"$GITHUB_WORKSPACE\"\ncd \"$GITHUB_WORKSPACE\"\n\
+        git remote add origin \"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git\"\ngit -c\
+        \ \"$HEADER\" fetch --tags origin '+refs/heads/*:refs/remotes/origin/*'\n\
+        git -c \"$HEADER\" fetch origin \"$CHECKOUT_REF\"\ngit checkout --detach FETCH_HEAD\n\
+        test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"\nif [ \"$CHECKOUT_SUBMODULES\"\
+        \ = recursive ]; then\n    key_file=$(mktemp \"${RUNNER_TEMP:-/tmp}/hextra-key.XXXXXX\"\
+        )\n    trap 'rm -f \"$key_file\"' EXIT\n    umask 077\n    printf '%s\\n'\
+        \ \"$HEXTRA_READ_KEY\" > \"$key_file\"\n    chmod 600 \"$key_file\"\n    export\
+        \ GIT_SSH_COMMAND=\"ssh -T -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes\
+        \ -o HostKeyAlgorithms=ssh-ed25519 -o UserKnownHostsFile=$GITHUB_WORKSPACE/.gitea/known_hosts\"\
+        \n    git submodule update --init --recursive\nfi\nif [ \"$PERSIST_CREDENTIALS\"\
+        \ = true ]; then\n    git config \"http.${GITHUB_SERVER_URL}/.extraheader\"\
+        \ \"AUTHORIZATION: basic $AUTH\"\nfi\n"
+      env:
+        CHECKOUT_REF: ${{ github.sha }}
+        CHECKOUT_SUBMODULES: 'false'
+        CHECKOUT_TOKEN: ${{ github.token }}
+        PERSIST_CREDENTIALS: 'false'
+        HEXTRA_READ_KEY: ''
+    - name: Setup Python
+      run: python3 -c "import sys; assert sys.version_info >= (3, 10)"
+    - name: Install Developer Dependencies
+      run: python3 -m pip install ruff==0.17.2 "PyYAML>=6.0,<7"
+    - name: Validate Shell Script Syntax
+      run: "for script in ci/packer/scripts/*.sh ci/scripts/init-node/provisioning/seed.sh;\
+        \ do\n  bash -n \"$script\"\ndone\nmake check\n"
+    - name: Setup Packer
+      run: 'packer version
+
+        packer plugins installed | grep qemu'
+    - name: Validate Packer Template
+      run: 'packer plugins installed | grep qemu
+
+        packer validate ci/packer/apex-debian-13.pkr.hcl
+
+        '
+  build-image:
+    name: 'Build: Golden Image'
+    needs: validate-scripts
+    runs-on: apex-debian13
+    outputs:
+      image_name: ${{ steps.vars.outputs.image_name }}
+    steps:
+    - name: Checkout repository
+      run: "set -euo pipefail\ncase \"$CHECKOUT_REF\" in -*) exit 1;; esac\nGITHUB_SERVER_URL=${GITHUB_SERVER_URL%/}\n\
+        case \"$GITHUB_SERVER_URL\" in https://git.ermnvldmr.com) ;; *) exit 1;; esac\n\
+        AUTH=$(printf 'deytenit:%s' \"$CHECKOUT_TOKEN\" | base64 -w0)\nHEADER=\"http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION:\
+        \ basic $AUTH\"\ngit init \"$GITHUB_WORKSPACE\"\ncd \"$GITHUB_WORKSPACE\"\n\
+        git remote add origin \"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git\"\ngit -c\
+        \ \"$HEADER\" fetch --tags origin '+refs/heads/*:refs/remotes/origin/*'\n\
+        git -c \"$HEADER\" fetch origin \"$CHECKOUT_REF\"\ngit checkout --detach FETCH_HEAD\n\
+        test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"\nif [ \"$CHECKOUT_SUBMODULES\"\
+        \ = recursive ]; then\n    key_file=$(mktemp \"${RUNNER_TEMP:-/tmp}/hextra-key.XXXXXX\"\
+        )\n    trap 'rm -f \"$key_file\"' EXIT\n    umask 077\n    printf '%s\\n'\
+        \ \"$HEXTRA_READ_KEY\" > \"$key_file\"\n    chmod 600 \"$key_file\"\n    export\
+        \ GIT_SSH_COMMAND=\"ssh -T -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes\
+        \ -o HostKeyAlgorithms=ssh-ed25519 -o UserKnownHostsFile=$GITHUB_WORKSPACE/.gitea/known_hosts\"\
+        \n    git submodule update --init --recursive\nfi\nif [ \"$PERSIST_CREDENTIALS\"\
+        \ = true ]; then\n    git config \"http.${GITHUB_SERVER_URL}/.extraheader\"\
+        \ \"AUTHORIZATION: basic $AUTH\"\nfi\n"
+      env:
+        CHECKOUT_REF: ${{ github.sha }}
+        CHECKOUT_SUBMODULES: 'false'
+        CHECKOUT_TOKEN: ${{ github.token }}
+        PERSIST_CREDENTIALS: 'false'
+        HEXTRA_READ_KEY: ''
+    - name: Compute Image Metadata
+      id: vars
+      run: 'SHORT_SHA="$(echo ${{ github.sha }} | cut -c1-7)"
+
+        IMAGE_NAME="com-ermnvldmr-apex-debian-13-amd64-${SHORT_SHA}.qcow2"
+
+        echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+        '
+    - name: Install QEMU & Build Tools
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y qemu-system-x86 qemu-utils xorriso
+
+        sudo chmod 666 /dev/kvm 2>/dev/null || true
+
+        '
+    - name: Setup Packer
+      run: 'packer version
+
+        packer plugins installed | grep qemu'
+    - name: Build Debian 13 Image with Packer
+      run: 'packer plugins installed | grep qemu
+
+        packer build -var "vm_name=${{ steps.vars.outputs.image_name }}" -var "provision_revision=${{
+        github.sha }}" ci/packer/apex-debian-13.pkr.hcl
+
+        '
+    - name: Upload Image Artifact
+      uses: ./.gitea/actions/upload-artifact
+      with:
+        name: golden-image
+        path: output-qemu/${{ steps.vars.outputs.image_name }}
+        retention-days: 30
+  upload-s3:
+    name: 'Upload: S3 Storage'
+    needs: build-image
+    if: inputs.upload_s3 == true
+    runs-on: apex-debian13
+    steps:
+    - run: "set -euo pipefail\ncase \"$CHECKOUT_REF\" in -*) exit 1;; esac\nGITHUB_SERVER_URL=${GITHUB_SERVER_URL%/}\n\
+        case \"$GITHUB_SERVER_URL\" in https://git.ermnvldmr.com) ;; *) exit 1;; esac\n\
+        AUTH=$(printf 'deytenit:%s' \"$CHECKOUT_TOKEN\" | base64 -w0)\nHEADER=\"http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION:\
+        \ basic $AUTH\"\ngit init \"$GITHUB_WORKSPACE\"\ncd \"$GITHUB_WORKSPACE\"\n\
+        git remote add origin \"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git\"\ngit -c\
+        \ \"$HEADER\" fetch --tags origin '+refs/heads/*:refs/remotes/origin/*'\n\
+        git -c \"$HEADER\" fetch origin \"$CHECKOUT_REF\"\ngit checkout --detach FETCH_HEAD\n\
+        test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"\nif [ \"$CHECKOUT_SUBMODULES\"\
+        \ = recursive ]; then\n    key_file=$(mktemp \"${RUNNER_TEMP:-/tmp}/hextra-key.XXXXXX\"\
+        )\n    trap 'rm -f \"$key_file\"' EXIT\n    umask 077\n    printf '%s\\n'\
+        \ \"$HEXTRA_READ_KEY\" > \"$key_file\"\n    chmod 600 \"$key_file\"\n    export\
+        \ GIT_SSH_COMMAND=\"ssh -T -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes\
+        \ -o HostKeyAlgorithms=ssh-ed25519 -o UserKnownHostsFile=$GITHUB_WORKSPACE/.gitea/known_hosts\"\
+        \n    git submodule update --init --recursive\nfi\nif [ \"$PERSIST_CREDENTIALS\"\
+        \ = true ]; then\n    git config \"http.${GITHUB_SERVER_URL}/.extraheader\"\
+        \ \"AUTHORIZATION: basic $AUTH\"\nfi\n"
+      env:
+        CHECKOUT_REF: ${{ github.sha }}
+        CHECKOUT_SUBMODULES: 'false'
+        CHECKOUT_TOKEN: ${{ github.token }}
+        PERSIST_CREDENTIALS: 'false'
+        HEXTRA_READ_KEY: ''
+    - name: Download Image Artifact
+      uses: ./.gitea/actions/download-artifact
+      with:
+        name: golden-image
+        path: output-qemu
+    - name: Upload to Static S3 (/dev/images/)
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.STATIC_AWS_ACCESS_KEY_ID || secrets.COM_ERMNVLDMR_STATIC_AWS_ACCESS_KEY_ID
+          }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.STATIC_AWS_SECRET_ACCESS_KEY || secrets.COM_ERMNVLDMR_STATIC_AWS_SECRET_ACCESS_KEY
+          }}
+        AWS_DEFAULT_REGION: ${{ secrets.STATIC_AWS_REGION || secrets.COM_ERMNVLDMR_STATIC_S3_REGION
+          || 'auto' }}
+        S3_ENDPOINT: ${{ secrets.STATIC_S3_ENDPOINT_URL || secrets.COM_ERMNVLDMR_STATIC_S3_ENDPOINT_URL
+          }}
+        S3_BUCKET: ${{ secrets.STATIC_S3_BUCKET || secrets.COM_ERMNVLDMR_STATIC_S3_BUCKET
+          }}
+        IMAGE_NAME: ${{ needs.build-image.outputs.image_name }}
+      run: "if [ -n \"${S3_BUCKET}\" ] && [ -n \"${AWS_ACCESS_KEY_ID}\" ]; then\n\
+        \  ENDPOINT_FLAG=\"\"\n  if [ -n \"${S3_ENDPOINT}\" ]; then\n    ENDPOINT_FLAG=\"\
+        --endpoint-url=${S3_ENDPOINT}\"\n  fi\n  echo \"Cleaning up older builds in\
+        \ dev/images/com-ermnvldmr-apex-debian-13-amd64-*.qcow2 to maintain quota...\"\
+        \n  aws ${ENDPOINT_FLAG} s3 rm \"s3://${S3_BUCKET}/dev/images/\" --recursive\
+        \ --exclude \"*\" --include \"com-ermnvldmr-apex-debian-13-amd64-*.qcow2\"\
+        \ || true\n  echo \"Uploading ${IMAGE_NAME}...\"\n  aws ${ENDPOINT_FLAG} s3\
+        \ cp \"output-qemu/${IMAGE_NAME}\" \"s3://${S3_BUCKET}/dev/images/${IMAGE_NAME}\"\
+        \n  echo \"Golden image uploaded successfully to s3://${S3_BUCKET}/dev/images/${IMAGE_NAME}\"\
+        \nelse\n  echo \"S3 credentials not configured; skipping upload. Image artifact\
+        \ preserved in GitHub Actions run.\"\nfi\n"

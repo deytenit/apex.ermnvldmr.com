@@ -1,0 +1,8 @@
+{
+  "name": "ci-action-gitea-upload-artifact",
+  "source": "https://github.com/christopherhx/gitea-upload-artifact.git",
+  "requested_ref": "v4",
+  "commit": "81f940d004763f986ba3582c007fd842dd5cb0d7",
+  "path": "/private/tmp/gitea-migration-20261105/mirrors/ci-action-gitea-upload-artifact.git",
+  "destination": "https://git.ermnvldmr.com/deytenit/ci-action-gitea-upload-artifact"
+}
