@@ -1,4 +1,4 @@
-"""Image-only installation and sanitization; never called by remote enrollment."""
+"""Image-only installation and sanitization; for golden-image builds."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +16,7 @@ from .target import preflight, run
 
 
 def install():
-    from .transport import _bundle_from_source
+    from .bundle import _bundle_from_source
     source = Path(__file__).resolve().parents[1]
     data, digest = _bundle_from_source(source)
     destination = safe_path(Path('/usr/local/lib/apex-provisioner') / digest)

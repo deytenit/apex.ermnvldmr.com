@@ -1,5 +1,5 @@
 #cloud-config
-# Use this same file for cloud-init or: python3 ci/scripts/init-node.py root@HOST --user-data FILE
+# Supply this file to cloud-init when booting the golden image.
 # Replace the hostname, repository and public key. Keep filled files outside Git.
 # SSH repositories additionally require approved deferred id_ed25519 (0600)
 # and known_hosts (0644) writes under /home/adam/.ssh, owned by adam:adam.
