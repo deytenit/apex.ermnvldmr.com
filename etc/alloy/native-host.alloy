@@ -1,0 +1,102 @@
+// Shared native Grafana Alloy configuration for the physical host.
+// Metrics and logs use the endpoints and credentials supplied through
+// APEX_PROM_PUSH_URL, APEX_LOKI_PUSH_URL, and APEX_OBS_BASIC_AUTH_USER/PASS.
+
+// ----------------------------------------------------------------------------
+// METRICS
+// ----------------------------------------------------------------------------
+
+// Native filesystem views; physical capacity is collected on the Proxmox host.
+prometheus.exporter.unix "node" {
+  enable_collectors = ["textfile"]
+  textfile {
+    directory = "/var/lib/alloy/textfile"
+  }
+  procfs_path = "/proc"
+  sysfs_path  = "/sys"
+  rootfs_path = "/"
+}
+
+// Container metrics (cadvisor-equivalent) via the docker socket.
+
+
+// Stamp a static `node` label onto each exporter's targets.
+discovery.relabel "node_metrics" {
+  targets = prometheus.exporter.unix.node.targets
+  rule {
+    action       = "replace"
+    target_label = "node"
+    replacement  = sys.env("APEX_NODE_HOST")
+  }
+  // Stamp a stable `instance` (the node's public host) instead of the default,
+  // which is the Alloy container id/address.
+  rule {
+    action       = "replace"
+    target_label = "instance"
+    replacement  = sys.env("APEX_NODE_HOST")
+  }
+}
+
+
+prometheus.scrape "node" {
+  targets         = discovery.relabel.node_metrics.output
+  forward_to      = [prometheus.remote_write.default.receiver]
+  scrape_interval = "30s"
+}
+
+
+// The configured Prometheus-compatible endpoint must accept remote writes.
+prometheus.remote_write "default" {
+  endpoint {
+    url = sys.env("APEX_PROM_PUSH_URL")
+    basic_auth {
+      username = sys.env("APEX_OBS_BASIC_AUTH_USER")
+      password = sys.env("APEX_OBS_BASIC_AUTH_PASS")
+    }
+    queue_config {
+      capacity             = 5000
+      max_shards           = 10
+      min_shards           = 1
+      max_samples_per_send = 1000
+      batch_send_deadline  = "5s"
+      min_backoff          = "100ms"
+      max_backoff          = "10s"
+    }
+  }
+  wal {
+    truncate_frequency = "30m"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "30m"
+  }
+}
+
+// ----------------------------------------------------------------------------
+// LOGS
+// ----------------------------------------------------------------------------
+
+// systemd journal (host services, ufw, sshd, crowdsec, etc.).
+loki.source.journal "systemd" {
+  path    = "/var/log/journal"
+  max_age = "12h"
+  labels  = {
+    node = sys.env("APEX_NODE_HOST"),
+    job  = "systemd-journal",
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+// All docker containers' stdout/stderr.
+
+
+
+
+// Push logs to the central Loki.
+loki.write "default" {
+  endpoint {
+    url = sys.env("APEX_LOKI_PUSH_URL")
+    basic_auth {
+      username = sys.env("APEX_OBS_BASIC_AUTH_USER")
+      password = sys.env("APEX_OBS_BASIC_AUTH_PASS")
+    }
+  }
+}

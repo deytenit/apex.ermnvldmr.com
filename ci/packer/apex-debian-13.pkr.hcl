@@ -79,6 +79,7 @@ build {
     scripts = [
       "ci/packer/scripts/01-base-system.sh",
       "ci/packer/scripts/02-storage-docker.sh",
+      "ci/packer/scripts/02-alloy-package.sh",
       "ci/packer/scripts/03-bootstrap-helper.sh",
       "ci/packer/scripts/04-cleanup.sh"
     ]
