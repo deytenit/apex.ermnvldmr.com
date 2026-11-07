@@ -133,12 +133,15 @@ class Checkout(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 remote.checkout(srv, "node", str(source), account, git)
             self.assertEqual(list(srv.iterdir()), [])
-            for repo in (source, root / "common"):
+            for repo in (source, root / "common", root / "leaf"):
                 git("init", "-q", repo)
                 (repo / "sample").write_text("initial")
                 git("-C", repo, "add", "sample")
                 git("-C", repo, "-c", "user.name=T", "-c", "user.email=t@test.example",
                     "commit", "-qm", "initial")
+            git("-C", root / "common", "submodule", "add", str(root / "leaf"), "nested")
+            git("-C", root / "common", "-c", "user.name=T", "-c", "user.email=t@test.example",
+                "commit", "-qm", "pin nested submodule")
             git("-C", source, "submodule", "add", str(root / "common"), "commons")
             git("-C", source, "-c", "user.name=T", "-c", "user.email=t@test.example",
                 "commit", "-qm", "add submodule")
@@ -150,3 +153,12 @@ class Checkout(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "does not match"):
                 remote.checkout(srv, "node", "another-origin", account, git)
             self.assertEqual(dirty.read_text(), "local edits")
+            nested = srv / "node/commons/nested"
+            git("-C", nested, "-c", "user.name=T", "-c", "user.email=t@test.example",
+                "commit", "--allow-empty", "-qm", "local commit")
+            local_head = git("-C", nested, "rev-parse", "HEAD")
+            (nested / "sample").write_text("nested edits")
+            with self.assertRaisesRegex(RuntimeError, "commons/nested"):
+                remote.checkout(srv, "node", str(source), account, git)
+            self.assertEqual(git("-C", nested, "rev-parse", "HEAD"), local_head)
+            self.assertEqual((nested / "sample").read_text(), "nested edits")

@@ -208,8 +208,9 @@ def checkout(srv, node, url, account, git):
         if query("rev-parse", "--show-toplevel") != str(destination) or query(
                 "config", "--get", "remote.origin.url") != url:
             raise RuntimeError("Existing checkout does not match the requested repository")
-        if any(line.startswith(("-", "U")) for line in query("submodule", "status", "--recursive").splitlines()):
-            raise RuntimeError("Existing checkout has uninitialized or conflicting submodules")
+        for line in query("submodule", "status", "--recursive").splitlines():
+            if line.startswith(("-", "+", "U")):
+                raise RuntimeError(f"Existing submodule does not match its recorded commit: {line}")
         return
     with tempfile.TemporaryDirectory(prefix=".apex-bootstrap-", dir=srv) as staging:
         stage = Path(staging)

@@ -114,11 +114,19 @@ class DockerPackageTests(unittest.TestCase):
         original.write_text('provider policy')
         policy.symlink_to(original)
         with self.assertRaisesRegex(RuntimeError, 'boom'):
-            with docker.service_start_guard():
+            with docker.package_policy_lock(), docker.service_start_guard():
                 self.assertFalse(policy.is_symlink())
                 raise RuntimeError('boom')
         self.assertTrue(policy.is_symlink())
         self.assertEqual(original.read_text(), 'provider policy')
+
+    def test_unfinished_backup_is_discarded_without_replacing_live_policy(self):
+        docker.POLICY_STATE.mkdir()
+        (docker.POLICY_STATE / 'original').write_text('partial')
+        docker.POLICY.write_text('complete provider policy')
+        with docker.package_policy_lock(), docker.service_start_guard():
+            pass
+        self.assertEqual(docker.POLICY.read_text(), 'complete provider policy')
 
     def test_interrupted_guard_is_recovered_before_next_attempt(self):
         state = self.host.path('/usr/sbin/.apex-policy-rc.d')
@@ -126,13 +134,13 @@ class DockerPackageTests(unittest.TestCase):
         (state / 'original').write_text('original policy')
         (state / 'ready').touch()
         self.host.path('/usr/sbin/policy-rc.d').write_text('#!/bin/sh\nexit 101\n')
-        with docker.service_start_guard():
+        with docker.package_policy_lock(), docker.service_start_guard():
             pass
         self.assertEqual(self.host.path('/usr/sbin/policy-rc.d').read_text(), 'original policy')
 
     def test_external_policy_change_is_not_overwritten(self):
         policy = self.host.path('/usr/sbin/policy-rc.d')
         with self.assertRaisesRegex(docker.DockerError, 'changed outside APEX'):
-            with docker.service_start_guard():
+            with docker.package_policy_lock(), docker.service_start_guard():
                 policy.write_text('external policy')
         self.assertEqual(policy.read_text(), 'external policy')

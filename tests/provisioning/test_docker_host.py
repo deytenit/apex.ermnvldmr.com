@@ -1,4 +1,4 @@
-from contextlib import nullcontext
+import fcntl
 import hashlib
 import io
 import json
@@ -18,6 +18,9 @@ class ManualDockerTests(unittest.TestCase):
         self.root = Path(tmp.name).resolve()
         (self.root / "etc").mkdir()
         (self.root / "etc/os-release").write_text("ID=debian\nVERSION_ID=13\n")
+        self.policy = self.root / "usr/sbin/policy-rc.d"
+        self.policy.parent.mkdir(parents=True)
+        self.state = self.policy.parent / ".apex-policy-rc.d"
         self.commands = []
         self.arch = "arm64"
         self.running = False
@@ -45,6 +48,8 @@ class ManualDockerTests(unittest.TestCase):
             return path if self.root in path.parents else self.root / str(path).lstrip("/")
 
         with (patch.object(docker, "Path", side_effect=target),
+              patch.object(docker, "POLICY", self.policy),
+              patch.object(docker, "POLICY_STATE", self.state),
               patch.object(docker, "run", side_effect=self.run_command),
               patch.object(docker, "package_versions", return_value=self.versions),
               patch.object(docker.shutil, "which", return_value="/usr/bin/docker" if self.running else None),
@@ -57,6 +62,25 @@ class ManualDockerTests(unittest.TestCase):
         self.assertEqual(self.apply()["docker_data_root"], "/custom/data")
         self.assertEqual(self.installations, [])
         self.assertFalse((self.root / "etc/docker").exists())
+
+    def test_working_engine_restores_interrupted_policy(self):
+        self.running = True
+        self.state.mkdir()
+        (self.state / "original").write_text("provider policy")
+        (self.state / "ready").touch()
+        self.policy.write_text("#!/bin/sh\nexit 101\n")
+        self.assertEqual(self.apply()["docker_data_root"], "/custom/data")
+        self.assertEqual(self.policy.read_text(), "provider policy")
+        self.assertFalse(self.state.exists())
+
+    def test_working_engine_refuses_an_active_package_operation(self):
+        self.running = True
+        lock = self.root / "run/lock/apex-package-policy.lock"
+        lock.parent.mkdir(parents=True)
+        with lock.open("a") as other:
+            fcntl.flock(other, fcntl.LOCK_EX)
+            with self.assertRaisesRegex(docker.DockerError, "Another APEX"):
+                self.apply()
 
     def test_pve_refused_before_packages_or_daemon(self):
         binary = self.root / "usr/bin/pveversion"
@@ -86,8 +110,7 @@ class ManualDockerTests(unittest.TestCase):
             if service == "docker":
                 self.running = True
 
-        with (patch.object(docker, "service_start_guard", return_value=nullcontext()),
-              patch.object(docker.urllib.request, "urlopen", return_value=io.BytesIO(key)),
+        with (patch.object(docker.urllib.request, "urlopen", return_value=io.BytesIO(key)),
               patch.object(docker, "DOCKER_KEY_SHA256", hashlib.sha256(key).hexdigest()),
               patch.object(docker, "ensure_service", side_effect=start)):
             self.assertEqual(self.apply()["docker_data_root"], "/srv/docker")
@@ -102,8 +125,7 @@ class ManualDockerTests(unittest.TestCase):
         self.assertNotIn("ufw", self.installations[-1])
 
     def test_untrusted_signing_key_cannot_publish_apt_source_or_install_docker(self):
-        with (patch.object(docker, "service_start_guard", return_value=nullcontext()),
-              patch.object(docker.urllib.request, "urlopen", return_value=io.BytesIO(b"wrong key"))):
+        with patch.object(docker.urllib.request, "urlopen", return_value=io.BytesIO(b"wrong key")):
             with self.assertRaisesRegex(docker.DockerError, "signing key"):
                 self.apply()
         self.assertFalse((self.root / "etc/apt/sources.list.d/apex-docker.sources").exists())
@@ -114,7 +136,6 @@ class ManualDockerTests(unittest.TestCase):
         self.running = True
         self.missing_buildx = True
         self.versions = {"docker-ce": "1"}
-        with patch.object(docker, "service_start_guard", return_value=nullcontext()):
-            self.assertEqual(self.apply()["docker_data_root"], "/custom/data")
+        self.assertEqual(self.apply()["docker_data_root"], "/custom/data")
         self.assertEqual(self.installations, [["docker-buildx-plugin"]])
         self.assertFalse((self.root / "etc/docker").exists())

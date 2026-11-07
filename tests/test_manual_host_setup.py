@@ -87,6 +87,23 @@ class HostSetup(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "differs from the checkout"):
                 installer.install(Path(temp).resolve())
 
+    def test_new_bundle_preserves_an_existing_rollback_installation(self):
+        installer_path = Path(__file__).resolve().parents[1] / "scripts/provisioning/manual_bundle.py"
+        installer = overlay.load_module(str(installer_path), "test_bundle_upgrade")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            checkout = root / "checkout"
+            checkout.mkdir()
+            for name in ("__init__.py", "access.py", "state.py"):
+                (checkout / name).write_text("# original")
+            with patch.object(installer, "__file__", str(checkout / "manual_bundle.py")):
+                original = installer.install(root)
+                (checkout / "access.py").write_text("# updated")
+                updated = installer.install(root)
+            self.assertNotEqual(original, updated)
+            self.assertEqual((original / "provisioning/access.py").read_text(), "# original")
+            self.assertEqual((updated / "provisioning/access.py").read_text(), "# updated")
+
     def test_other_linux_distributions_are_rejected_before_installing_the_watchdog(self):
         hardening = action("config/hardening")
         ctx = SimpleNamespace(sys=Mock())

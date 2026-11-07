@@ -1,72 +1,74 @@
 """Install an immutable watchdog bundle from the operator's checkout."""
+import errno
 import hashlib
-import io
 import os
 from pathlib import Path
-import shutil
 import stat
-import tarfile
 import tempfile
 
 
-def _bundle_from_source(root):
-    root = Path(root).resolve()
-    files = [root / 'provisioning' / name for name in ('__init__.py', 'access.py', 'state.py')]
-    output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode='w') as archive:
-        for path in files:
-            if (not path.is_file() or '__pycache__' in path.parts
-                    or any(part.is_symlink() for part in (path, *path.parents))):
-                raise RuntimeError('Provisioning bundle contains an unsafe source path')
-            data = path.read_bytes()
-            info = tarfile.TarInfo(path.relative_to(root).as_posix())
-            info.size, info.mode, info.mtime = len(data), 0o644, 0
-            info.uid = info.gid = 0
-            archive.addfile(info, io.BytesIO(data))
-    data = output.getvalue()
-    return data, hashlib.sha256(data).hexdigest()
+MODULES = ('__init__.py', 'access.py', 'state.py')
 
 
-def _trusted(path):
+def _trusted_directory(path):
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
-        raise RuntimeError(f"Untrusted provisioning directory: {path}")
+        raise RuntimeError(f'Untrusted provisioning directory: {path}')
+
+
+def _verify(destination, files):
+    _trusted_directory(destination)
+    package = destination / 'provisioning'
+    _trusted_directory(package)
+    # Python can create bytecode caches when the installed watchdog runs.
+    for path in destination.rglob('*'):
+        info = path.lstat()
+        if (info.st_uid != os.geteuid() or info.st_mode & 0o022
+                or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))):
+            raise RuntimeError(f'Untrusted installed provisioning file: {path}')
+    for name, data in files.items():
+        target = package / name
+        if not target.is_file() or target.read_bytes() != data:
+            raise RuntimeError('Installed provisioning bundle differs from the checkout')
 
 
 def install(root=Path('/')):
-    source = Path(__file__).resolve().parents[1]
-    data, digest = _bundle_from_source(source)
-    # All ancestors from the filesystem root must be protected before publishing code.
+    source = Path(__file__).resolve().parent
+    files = {}
+    digest = hashlib.sha256()
+    for name in MODULES:
+        path = source / name
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise RuntimeError(f'Unsafe provisioning source file: {path}')
+        data = files[name] = path.read_bytes()
+        digest.update(name.encode() + b'\0' + len(data).to_bytes(8, 'big') + data)
+
     parent = root
-    _trusted(parent)
+    _trusted_directory(parent)
     for component in ('usr', 'local', 'lib', 'apex-provisioner'):
         parent = parent / component
         parent.mkdir(mode=0o755, exist_ok=True)
-        _trusted(parent)
-    destination = parent / digest
+        _trusted_directory(parent)
+    destination = parent / digest.hexdigest()
+    if destination.exists():
+        _verify(destination, files)
+        return destination
+
     with tempfile.TemporaryDirectory(prefix='.install-', dir=parent) as temporary:
         stage = Path(temporary) / 'bundle'
+        package = stage / 'provisioning'
         stage.mkdir(mode=0o755)
-        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-            for member in archive:
-                if not member.isfile() or '..' in Path(member.name).parts or Path(member.name).is_absolute():
-                    raise RuntimeError('Invalid provisioning bundle member')
-                target = stage / member.name
-                target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-                with archive.extractfile(member) as source_file, target.open('xb') as output:
-                    shutil.copyfileobj(source_file, output)
-                target.chmod(member.mode)
+        package.mkdir(mode=0o755)
+        for name, data in files.items():
+            target = package / name
+            target.write_bytes(data)
+            target.chmod(0o644)
         try:
-            os.rename(stage, destination)
-        except OSError:
-            _trusted(destination)
-            installed, existing_digest = _bundle_from_source(destination)
-            if existing_digest != digest or installed != data:
-                raise RuntimeError('Installed provisioning bundle differs from the checkout') from None
-            for path in destination.rglob('*'):
-                info = path.lstat()
-                if info.st_uid != os.geteuid() or info.st_mode & 0o022 or path.is_symlink():
-                    raise RuntimeError(f'Untrusted installed provisioning file: {path}') from None
+            stage.rename(destination)
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                raise
+            _verify(destination, files)
     return destination
 
 

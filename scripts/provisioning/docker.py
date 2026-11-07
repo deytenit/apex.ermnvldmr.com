@@ -95,8 +95,13 @@ def restore_service_policy():
     backup = POLICY_STATE / "original"
     if (POLICY_STATE.is_symlink() or POLICY_STATE.stat().st_uid != os.geteuid()):
         raise DockerError("Refusing untrusted service policy recovery state.")
-    if (POLICY_STATE / "ready").exists() and POLICY.exists():
-        original_matches = (backup.exists() and not POLICY.is_symlink() and
+    ready = POLICY_STATE / "ready"
+    if not ready.exists():
+        # The live policy is untouched until the backup is complete.
+        shutil.rmtree(POLICY_STATE)
+        return
+    if POLICY.exists() or POLICY.is_symlink():
+        original_matches = (backup.is_file() and not backup.is_symlink() and not POLICY.is_symlink() and
                             POLICY.read_bytes() == backup.read_bytes())
         symlink_matches = (backup.is_symlink() and POLICY.is_symlink() and
                            os.readlink(backup) == os.readlink(POLICY))
@@ -112,13 +117,14 @@ def restore_service_policy():
         os.replace(temporary, POLICY)
     elif (POLICY_STATE / "absent").exists():
         POLICY.unlink(missing_ok=True)
-    elif (POLICY_STATE / "ready").exists():
+    else:
         raise DockerError("Service policy recovery is incomplete; inspect /usr/sbin/.apex-policy-rc.d.")
+    ready.unlink()
     shutil.rmtree(POLICY_STATE)
 
 
 @contextmanager
-def service_start_guard():
+def package_policy_lock():
     lock_path = Path("/run/lock/apex-package-policy.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a") as lock:
@@ -126,13 +132,13 @@ def service_start_guard():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise DockerError("Another APEX package operation is running.") from None
-        with _service_start_guard():
-            yield
+        restore_service_policy()
+        yield
 
 
 @contextmanager
-def _service_start_guard():
-    restore_service_policy()
+def service_start_guard():
+    """Temporarily inhibit service starts while the caller holds the package lock."""
     POLICY_STATE.mkdir(mode=0o700)
     try:
         if POLICY.exists() or POLICY.is_symlink():
@@ -258,6 +264,11 @@ def apply_docker_policy():
     if (release.get("ID", "").strip('"') != "debian" or
             release.get("VERSION_ID", "").strip('"') != "13" or arch not in ("amd64", "arm64")):
         raise DockerError("Docker installation supports stock Debian 13 amd64 or arm64.")
+    with package_policy_lock():
+        return _apply_docker_policy(arch)
+
+
+def _apply_docker_policy(arch):
     info = [*LOCAL_DOCKER, "info", "--format", "{{.DockerRootDir}}"]
     if shutil.which("docker"):
         current = run(info, check=False)
