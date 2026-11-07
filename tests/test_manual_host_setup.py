@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -27,18 +28,75 @@ class HostSetup(unittest.TestCase):
         self.assertIn("sudo", requested)
         self.assertNotIn("ufw", requested)
 
-    def test_failed_effective_policy_restores_original_configuration(self):
+    def test_fresh_key_proof_gates_each_destructive_phase(self):
         hardening = action("config/hardening")
-        system, host = Mock(), Mock()
-        system.sudo.return_value.stdout = "Port 22\n"
-        with (patch.object(hardening, "_operator_access", return_value="verified"),
-              patch.object(hardening, "_effective", return_value={"authenticationmethods": "any"})):
-            with self.assertRaisesRegex(RuntimeError, "effective SSH"):
-                hardening.run(SimpleNamespace(sys=system, host=host), None)
-        writes = host.write_file.call_args_list
-        self.assertTrue(writes[0].args[1].startswith("Port 22\n"))
-        self.assertEqual(writes[-1].args[1], "Port 22\n")
-        system.reload.assert_called_once_with("ssh")
+        for phase, operation in (("transition", "finalize"), ("final", "commit")):
+            state = {"status": phase, "authenticated_after_us": 123,
+                     "bundle": "/usr/local/lib/apex-provisioner/" + "a" * 64, "token": "a" * 32}
+            system = Mock()
+            with (patch.object(hardening, "_state", return_value=state),
+                  patch.object(hardening, "_connection", side_effect=RuntimeError("fresh login required")) as proof):
+                with self.assertRaisesRegex(RuntimeError, "fresh login required"):
+                    hardening.run(SimpleNamespace(sys=system), SimpleNamespace(operation=operation))
+                proof.assert_called_once_with(unittest.mock.ANY, after=123)
+            self.assertFalse(system.mock_calls)
+
+    def test_begin_installs_bundle_before_dispatch_with_real_endpoint_and_profile(self):
+        hardening = action("config/hardening")
+        ctx = SimpleNamespace(sys=Mock())
+        bundle = "/usr/local/lib/apex-provisioner/" + "a" * 64
+        ctx.sys.sudo.return_value.stdout = bundle
+        with (patch.object(hardening, "_operator_access"),
+              patch.object(hardening, "_state", return_value={}),
+              patch.object(Path, "is_file", return_value=True),
+              patch.object(hardening, "_original_endpoint", return_value=(2022, "192.0.2.8"))):
+            hardening.run(ctx, None)
+        install, begin = [call.args[0] for call in ctx.sys.sudo.call_args_list]
+        self.assertTrue(install[-1].endswith("/manual_bundle.py"))
+        self.assertIn(bundle, begin)
+        self.assertEqual(begin[begin.index("begin"): -2],
+                         ["begin", "--profile", "proxmox", "--original-port", "2022", "--client-address", "192.0.2.8"])
+
+    def test_installed_watchdog_survives_checkout_and_dispatches_cli_arguments(self):
+        hardening = action("config/hardening")
+        root = Path(__file__).resolve().parents[1]
+        installer = overlay.load_module(str(root / "ci/scripts/init-node/provisioning/manual_bundle.py"),
+                                        "test_manual_bundle")
+        with tempfile.TemporaryDirectory() as temp, patch.object(sys, "path", list(sys.path)):
+            destination = installer.install(Path(temp).resolve())
+            self.assertEqual(installer.install(Path(temp).resolve()), destination)
+            state = {"status": "final", "authenticated_after_us": 120, "profile": "debian",
+                     "bundle": "/usr/local/lib/apex-provisioner/" + destination.name, "token": "a" * 32}
+            system = Mock()
+            with (patch.object(hardening, "_state", return_value=state),
+                  patch.object(hardening, "_connection")):
+                hardening.run(SimpleNamespace(sys=system), SimpleNamespace(operation="commit"))
+            # Run the generated CLI in isolation. Stop at its root check after argument parsing.
+            command = system.sudo.call_args.args[0]
+            command[0] = sys.executable
+            command[3] = "import os; os.geteuid = lambda: 1000; " + command[3]
+            command[4] = str(destination)
+            result = subprocess.run(command, cwd=temp, capture_output=True, text=True, timeout=30)
+            self.assertIn("Access handover requires root", result.stderr)
+            source = destination / "provisioning/access.py"
+            source.chmod(0o666)
+            with self.assertRaisesRegex(RuntimeError, "Untrusted installed"):
+                installer.install(Path(temp).resolve())
+            source.chmod(0o644)
+            source.write_text("changed")
+            with self.assertRaisesRegex(RuntimeError, "differs from the checkout"):
+                installer.install(Path(temp).resolve())
+
+    def test_other_linux_distributions_are_rejected_before_installing_the_watchdog(self):
+        hardening = action("config/hardening")
+        ctx = SimpleNamespace(sys=Mock())
+        with (patch.object(hardening, "_operator_access"),
+              patch.object(hardening, "_state", return_value={}),
+              patch.object(Path, "is_file", return_value=False),
+              patch.object(hardening.platform, "freedesktop_os_release", return_value={"ID": "ubuntu"})):
+            with self.assertRaisesRegex(RuntimeError, "supports Debian"):
+                hardening.run(ctx, None)
+        self.assertFalse(ctx.sys.mock_calls)
 
     def test_current_endpoint_must_have_authenticated_with_a_key(self):
         hardening = action("config/hardening")
@@ -60,6 +118,22 @@ class HostSetup(unittest.TestCase):
             ctx.sys.sudo.side_effect = [sockets, SimpleNamespace(returncode=0, stdout=json.dumps(accepted))]
             self.assertEqual(hardening._connection(ctx),
                              "user=adam,host=192.0.2.8,addr=192.0.2.8,laddr=192.0.2.9,lport=22")
+
+    def test_reused_transport_and_wrong_port_cannot_finalize(self):
+        hardening = action("config/hardening")
+        ctx = SimpleNamespace(sys=Mock())
+        entry = {"_PID": "60", "__MONOTONIC_TIMESTAMP": "100",
+                 "MESSAGE": "Accepted publickey for adam from 192.0.2.8 port 3002 ssh2: ED25519"}
+        ctx.sys.sudo.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(entry))
+        with (patch.object(hardening.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="adam")),
+              patch.object(hardening, "_ancestors", return_value={60: 50})):
+            for port, after in ((22, 49), (2222, 50), (2222, 99), (2222, 101)):
+                with (self.subTest(port=port, after=after),
+                      patch.object(hardening, "_socket", return_value=("192.0.2.9", port, "192.0.2.8", 3002)),
+                      self.assertRaises(RuntimeError)):
+                    hardening._connection(ctx, after=after)
+            with patch.object(hardening, "_socket", return_value=("192.0.2.9", 2222, "192.0.2.8", 3002)):
+                self.assertIn("lport=2222", hardening._connection(ctx, after=49))
 
     def test_journald_restart_failure_restores_previous_config(self):
         base = action("config/base")

@@ -192,6 +192,63 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.transition.load()['status'], 'committed')
         self.assertFalse(self.host.path('/etc/systemd/system/ssh.service.d/apex-init.conf').exists())
 
+    def manual(self, profile):
+        self.host.live_arguments = lambda: (['/usr/sbin/sshd', '-D'], '755')
+        self.host.listener_ports = lambda pid: set(self.host.ports)
+        return Transition(self.host, now=lambda: self.clock, profile=profile)
+
+    def test_manual_debian_keeps_all_old_ports_then_limits_to_operator_port(self):
+        self.host.ports = [22, 2200]
+        manual = self.manual('debian')
+        manual.execute('begin', TOKEN, 2200, '192.0.2.1')
+        self.assertEqual(self.host.ports, [22, 2200, 2222])
+        boundary = manual.load()['authenticated_after_us']
+        with self.assertRaisesRegex(AccessError, 'workflow is pending'):
+            self.begin()
+        manual.execute('finalize', TOKEN)
+        self.assertEqual(self.host.ports, [2222])
+        self.assertGreaterEqual(manual.load()['authenticated_after_us'], boundary)
+        manual.execute('commit', TOKEN)
+        self.assertIsNone(self.transition.load())
+        self.assertNotIn('security', manual.load())
+
+    def test_manual_proxmox_installed_policy_never_restarts_and_preserves_image_state(self):
+        self.host.ports = [22, 2222]
+        self.transition.save({'status': 'committed', 'token': 'b' * 32})
+        manual = self.manual('proxmox')
+        with patch.object(self.host, 'install_policy', side_effect=AssertionError('restarted sshd')):
+            for round_number in range(2):
+                token = str(round_number) * 32
+                manual.execute('begin', token, 22, '192.0.2.1')
+                manual.execute('finalize', token)
+                manual.execute('commit', token)
+        self.assertEqual(self.host.ports, [22, 2222])
+        self.assertEqual(self.transition.load(), {'status': 'committed', 'token': 'b' * 32})
+
+    def test_plain_watchdog_restores_manual_override_on_reboot(self):
+        override = self.host.path('/etc/systemd/system/ssh.service.d/apex-init.conf')
+        atomic(override, b'original managed invocation')
+        manual = self.manual('proxmox')
+        manual.execute('begin', TOKEN, 22, '192.0.2.1')
+        manual.execute('finalize', TOKEN)
+        self.assertEqual(self.host.ports, [22, 2222])
+        self.host.boot = 'second-boot'
+        Transition(self.host, now=lambda: 0).execute('tick')
+        self.assertEqual(override.read_bytes(), b'original managed invocation')
+        self.assertEqual(manual.load()['status'], 'rolled_back')
+        self.assertFalse(self.host.armed)
+
+    def test_failed_disarm_is_retried_after_durable_commit_without_rollback(self):
+        self.begin()
+        self.transition.execute('finalize', TOKEN)
+        with patch.object(self.host, 'disarm', side_effect=AccessError('unavailable')), self.assertRaises(AccessError):
+            self.transition.execute('commit', TOKEN)
+        self.clock += 400
+        self.transition.execute('tick')
+        self.assertEqual(self.transition.load()['status'], 'committed')
+        self.assertFalse(self.host.armed)
+        self.assertEqual(self.host.restored, 0)
+
     def test_reject_symlink_state_ancestor(self):
         outside = self.host.path('/outside')
         outside.mkdir()
@@ -444,6 +501,35 @@ class OpenSSHPolicyTests(unittest.TestCase):
                 self.assertNotIn('provider', allowed)
                 self.assertIn('x11forwarding no', effective)
                 self.assertIn('permitemptypasswords no', effective)
+
+    def test_proxmox_effective_root_key_auth_and_both_ports_with_legacy_operator_block(self):
+        self.host.profile = 'proxmox'
+        with self.config.open('a') as stream:
+            stream.write('# APEX operator SSH policy\nMatch User adam\n'
+                         '  AuthenticationMethods publickey\n  PubkeyAuthentication yes\n'
+                         '  PasswordAuthentication no\n  KbdInteractiveAuthentication no\n'
+                         '  PermitEmptyPasswords no\n  X11Forwarding no\n')
+        final = self.host.policy([22, 2222], True, '192.0.2.1')
+        for user in ('root', 'adam'):
+            effective = self.effective(final, user)
+            self.assertEqual({item for item in effective if item.startswith('port ')}, {'port 22', 'port 2222'})
+            self.assertTrue({'permitrootlogin without-password', 'permitrootlogin prohibit-password'}.intersection(effective))
+            self.assertIn('authenticationmethods publickey', effective)
+            self.assertFalse(any(item.startswith('allowusers ') for item in effective))
+        with self.config.open('a') as stream:
+            stream.write('  PasswordAuthentication yes\n')
+        with self.assertRaisesRegex(AccessError, 'Match'):
+            self.host.policy([22, 2222], True, '192.0.2.1')
+
+    def test_adding_probe_port_preserves_authentication_from_the_existing_service(self):
+        self.host.profile = 'debian'
+        args = ['/usr/sbin/sshd', '-p', '2200', '-o', 'PermitRootLogin=no', '-o', 'PasswordAuthentication=no', '-D']
+        with patch.object(self.host, 'service_arguments', return_value=args):
+            transition = self.host.policy([2200, 2222], False, '192.0.2.1')
+        effective = self.effective(transition, 'root')
+        self.assertIn('permitrootlogin no', effective)
+        self.assertIn('passwordauthentication no', effective)
+        self.assertIn('port 2200', effective)
 
     def test_additive_inherited_allowusers_stops_finalization(self):
         with self.config.open('a') as stream:

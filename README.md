@@ -121,7 +121,17 @@ apex config/adam --public-key-file /path/to/operator.pub
 apex repository/chown
 ```
 
-`config/adam` grants passwordless sudo. `repository/chown` gives adam ownership of the tracked checkout directly under `/srv` and its Git metadata. Open a new SSH connection as adam with the operator key and run `./commons/apex config/hardening` from the checkout in that session. An independent administrator login can also run the action after the operator’s authorized key and sudo access are configured. It applies the SSH public-key policy for adam and preserves the platform's existing management ports and other logins.
+`config/adam` grants passwordless sudo. `repository/chown` gives adam ownership of the tracked checkout directly under `/srv` and its Git metadata.
+
+Before moving SSH to port 2222, allow inbound TCP/2222 from the operator’s address through the provider firewall and the node’s firewall (UFW on stock Debian or the PVE firewall). Keep the original administrator session open throughout the transition.
+
+1. Run `./commons/apex config/hardening begin` from the node checkout in the original SSH session.
+2. On your workstation, run `ssh -o ControlPath=none -o BatchMode=yes -p 2222 adam@node.example.com` using the operator key. In the new session, run `./commons/apex config/hardening finalize` from the checkout.
+3. Run the same SSH command again from your workstation. From the checkout in this second fresh session, run `./commons/apex config/hardening commit` to cancel automatic rollback.
+
+On stock Debian the final policy allows only `adam` on port 2222 using a public key. PVE retains ports 22 and 2222, requires public keys globally, and keeps root key access with `PermitRootLogin prohibit-password` and no `AllowUsers` restriction.
+
+If a login fails, run `./commons/apex config/hardening rollback` from the checkout in the original session or let the timer restore the original SSH configuration five minutes after `begin`. Use `./commons/apex config/hardening status` to inspect the transition. [Action reference](https://docs.ermnvldmr.com/en/apex/reference/actions/#confighardening)
 
 ### Infrastructure Administrator
 

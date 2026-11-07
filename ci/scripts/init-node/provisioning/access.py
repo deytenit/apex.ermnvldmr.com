@@ -54,8 +54,21 @@ def include_arguments(value):
     return arguments
 
 
+MANUAL_PROFILES = ('debian', 'proxmox')
+OPERATOR_MATCH = """Match User adam
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+X11Forwarding no""".splitlines()
+
+
 class Host:
-    def __init__(self, root=Path('/'), runner=subprocess.run):
+    def __init__(self, root=Path('/'), runner=subprocess.run, profile=None):
+        if profile is not None and profile not in MANUAL_PROFILES:
+            raise AccessError('Unknown SSH access profile')
+        self.profile = profile
         self.root = Path(root).resolve()
         self.runner = runner
 
@@ -136,7 +149,16 @@ class Host:
             remaining -= len(content)
             if remaining < 0:
                 raise AccessError('SSH configuration exceeds supported inspection limits; manual reconciliation required')
-            for line in content.decode().splitlines():
+            lines = content.decode().splitlines()
+            if self.profile and path == self.path('/etc/ssh/sshd_config'):
+                # The legacy action appended this exact terminal block. Any additional
+                # directives would change its meaning and require manual inspection.
+                marker = '# APEX operator SSH policy'
+                if marker in lines:
+                    position = lines.index(marker)
+                    if [item.strip() for item in lines[position + 1:] if item.strip()] == OPERATOR_MATCH:
+                        lines = lines[:position]
+            for line in lines:
                 line = line.lstrip()
                 if not line or line.startswith('#'):
                     continue
@@ -236,6 +258,10 @@ class Host:
     def verify_active(self, ports, final, address):
         args, pid = self.live_arguments()
         self.verify_policy([arg for arg in args if arg != '-D'], ports, final, address)
+        if self.listener_ports(pid) != set(ports):
+            raise AccessError('Active SSH listening ports differ from the declared policy')
+
+    def listener_ports(self, pid):
         output = self.command(['ss', '-H', '-ltnp']).stdout
         actual_ports = set()
         for line in output.splitlines():
@@ -247,19 +273,41 @@ class Host:
             if len(fields) < 5 or not fields[3].rsplit(':', 1)[-1].isdecimal():
                 raise AccessError('Unable to verify the active SSH listening sockets')
             actual_ports.add(int(fields[3].rsplit(':', 1)[-1]))
-        if actual_ports != set(ports):
-            raise AccessError('Active SSH listening ports differ from the declared policy')
+        return actual_ports
+
+    @property
+    def final_ports(self):
+        return [22, 2222] if self.profile == 'proxmox' else [2222]
+
+    def authentication_options(self):
+        proxmox = self.profile == 'proxmox'
+        options = {'PermitRootLogin': 'prohibit-password' if proxmox else 'no',
+                   'PasswordAuthentication': 'no', 'KbdInteractiveAuthentication': 'no',
+                   'PubkeyAuthentication': 'yes', 'AuthenticationMethods': 'publickey'}
+        if not proxmox:
+            options['AllowUsers'] = 'adam'
+        options.update(X11Forwarding='no', PermitEmptyPasswords='no')
+        return options
 
     def policy(self, ports, final, address):
         args = ['/usr/sbin/sshd']
         for port in sorted(set(ports)):
             args += ['-p', str(port)]
         if final:
-            for value in ('PermitRootLogin=no', 'PasswordAuthentication=no',
-                          'KbdInteractiveAuthentication=no', 'PubkeyAuthentication=yes',
-                          'AuthenticationMethods=publickey', 'AllowUsers=adam',
-                          'X11Forwarding=no', 'PermitEmptyPasswords=no'):
-                args += ['-o', value]
+            for key, value in self.authentication_options().items():
+                args += ['-o', f'{key}={value}']
+        elif self.profile:
+            # Keep existing managed authentication options when adding the probe port.
+            current = iter(self.service_arguments()[1:])
+            for flag in current:
+                if flag == '-D':
+                    continue
+                value = next(current, '')
+                if flag == '-p' and value.isdecimal():
+                    continue
+                if flag != '-o' or not re.fullmatch(r'[A-Za-z]+=[A-Za-z0-9,-]+', value):
+                    raise AccessError('Cannot safely extend the existing SSH invocation')
+                args += [flag, value]
         self.verify_policy(args, ports, final, address)
         return args
 
@@ -277,12 +325,15 @@ class Host:
                 values.setdefault(key, []).append(value)
             if set(values.get('port', [])) != {str(p) for p in ports}:
                 raise AccessError('Effective SSH ports do not match the handover policy')
-            if final and any(values.get(k) != [v] for k, v in {
-                    'permitrootlogin': 'no', 'passwordauthentication': 'no',
-                    'kbdinteractiveauthentication': 'no', 'pubkeyauthentication': 'yes',
-                    'authenticationmethods': 'publickey', 'allowusers': 'adam',
-                    'x11forwarding': 'no', 'permitemptypasswords': 'no'}.items()):
-                raise AccessError('Effective SSH authentication policy is inconsistent')
+            if final:
+                expected = {key.lower(): [value] for key, value in self.authentication_options().items()}
+                if self.profile == 'proxmox':
+                    if values.get('permitrootlogin') == ['without-password']:
+                        values['permitrootlogin'] = ['prohibit-password']
+                    if any(key in values for key in ('allowusers', 'denyusers', 'allowgroups', 'denygroups')):
+                        raise AccessError('SSH account restrictions conflict with Proxmox root-key access')
+                if any(values.get(key) != value for key, value in expected.items()):
+                    raise AccessError('Effective SSH authentication policy is inconsistent')
 
     def current_final(self, address):
         try:
@@ -374,19 +425,27 @@ def atomic(path, data, mode=0o600):
 
 
 class Transition:
-    def __init__(self, host=None, now=time.monotonic, security=None):
+    def __init__(self, host=None, now=time.monotonic, security=None, profile=None):
         from .security import Security
+        if profile is not None and profile not in MANUAL_PROFILES:
+            raise AccessError('Unknown SSH access profile')
+        self.profile = profile
         self.host = host or Host()
+        self.host.profile = profile
         self.security = security if security is not None else Security(self.host)
         self.now = now
         self.directory = self.host.path('/var/lib/apex-init/access')
 
     def load(self):
-        path = self.directory / 'state.json'
+        return self._read_record(bool(self.profile))
+
+    def _read_record(self, manual):
+        path = self.directory / ('manual-state.json' if manual else 'state.json')
         return json.loads(path.read_text()) if path.exists() else None
 
     def save(self, state):
-        atomic(self.directory / 'state.json', json.dumps(state, sort_keys=True).encode())
+        path = self.directory / ('manual-state.json' if state.get('profile') else 'state.json')
+        atomic(path, json.dumps(state, sort_keys=True).encode())
 
     def execute(self, operation, token=None, original_port=None, client_address=None):
         # Rollback must never wait for a stalled enrollment stage holding init.lock.
@@ -413,6 +472,24 @@ class Transition:
         with os.fdopen(descriptor, 'w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             state = self.load()
+            other = self._read_record(not self.profile)
+            active = ('transition', 'final', 'recovery_pending')
+            if other and other['status'] in active:
+                if operation == 'tick':
+                    state = other
+                else:
+                    raise AccessError('Another access workflow is pending; wait for rollback before retrying')
+            if state and self.profile and state.get('profile') != self.profile and operation != 'tick':
+                if operation != 'begin' or state['status'] in active:
+                    raise AccessError('Access transition belongs to a different platform')
+                state = None
+            if operation == 'tick' and other and other.get('disarm_pending') and not (state and state['status'] in active):
+                state = other
+            if state and state.get('disarm_pending') and state['status'] in ('committed', 'rolled_back'):
+                self._disarm(state)
+            if (state and token and token == state.get('token')
+                    and (operation, state['status']) in (('commit', 'committed'), ('rollback', 'rolled_back'))):
+                return {'status': state['status']}
             if state and state['status'] == 'recovery_pending':
                 self._rollback(state)
                 if operation != 'tick':
@@ -437,6 +514,8 @@ class Transition:
                     raise AccessError('Invalid SSH client address') from None
                 self.host.preflight()
                 path = self.host.path('/etc/systemd/system/ssh.service.d/apex-init.conf')
+                if self.profile:
+                    return self._begin_manual(token, original_port, client_address, path)
                 preserve_policy = False
                 if state and state['status'] == 'committed':
                     if state['fingerprint'] != self.host.fingerprint():
@@ -484,8 +563,14 @@ class Transition:
                     raise AccessError('Access transition is not ready for final policy')
                 try:
                     if not state.get('preserve_policy'):
-                        self.host.install_policy([2222], True, state['client_address'])
-                    self.security.finalize(state['security'], lambda value: self._save_security(state, value))
+                        if state.get('profile'):
+                            state['ssh_changed'] = True
+                            self.save(state)
+                        self.host.install_policy(self.host.final_ports, True, state['client_address'])
+                    if state.get('profile'):
+                        state['authenticated_after_us'] = time.monotonic_ns() // 1000
+                    else:
+                        self.security.finalize(state['security'], lambda value: self._save_security(state, value))
                     state['status'] = 'final'
                     state['fingerprint'] = self.host.fingerprint()
                     self.save(state)
@@ -494,13 +579,46 @@ class Transition:
                     raise
                 return {'status': 'final'}
             if operation == 'commit' and state['status'] == 'final':
-                self.host.verify_active([2222], True, state['client_address'])
-                self.security.verify(state['security'])
+                self.host.verify_active(self.host.final_ports, True, state['client_address'])
+                if not state.get('profile'):
+                    self.security.verify(state['security'])
                 state['status'] = 'committed'
+                state['disarm_pending'] = True
                 self.save(state)  # Timer observes this before it can restore anything.
-                self.host.disarm()
+                self._disarm(state)
                 return {'status': 'committed'}
             raise AccessError('Invalid access transition operation')
+
+    def _begin_manual(self, token, original_port, address, path):
+        _, pid = self.host.live_arguments()
+        ports = self.host.listener_ports(pid)
+        if original_port not in ports:
+            raise AccessError('Original SSH port is not active on the managed daemon')
+        preserve_policy = False
+        if ports == set(self.host.final_ports):
+            try:
+                self.host.verify_active(self.host.final_ports, True, address)
+                preserve_policy = True
+            except AccessError:
+                pass
+        previous = base64.b64encode(path.read_bytes()).decode() if path.exists() else None
+        state = {'status': 'transition', 'profile': self.profile, 'token': token,
+                 'deadline': self.now() + 300, 'boot_id': self.host.boot_id(),
+                 'bundle': str(Path(__file__).resolve().parents[1]),
+                 'client_address': address, 'original_port': original_port, 'previous': previous,
+                 'preserve_policy': preserve_policy, 'ssh_changed': 2222 not in ports}
+        self.host.arm()
+        self.save(state)
+        try:
+            if 2222 not in ports:
+                self.host.install_policy(sorted(ports | {2222}), False, address)
+            state['fingerprint'] = self.host.fingerprint()
+            state['authenticated_after_us'] = time.monotonic_ns() // 1000
+            self.save(state)
+        except Exception:
+            self._rollback(state)
+            raise
+        return {'status': 'transition'}
 
     def _save_security(self, state, value):
         state['security'] = value
@@ -513,7 +631,7 @@ class Transition:
                 self.security.restore(state['security'], lambda value: self._save_security(state, value))
             except Exception:
                 errors.append('security')
-        if not state.get('ssh_restored'):
+        if not state.get('ssh_restored') and state.get('ssh_changed', True):
             try:
                 self.host.restore(state)
                 state['ssh_restored'] = True
@@ -527,14 +645,21 @@ class Transition:
                               '; watchdog remains armed; inspect the root-owned access record')
         state['status'] = 'rolled_back'
         state.pop('recovery_errors', None)
+        state['disarm_pending'] = True
         self.save(state)
+        self._disarm(state)
+
+    def _disarm(self, state):
         self.host.disarm()
+        state.pop('disarm_pending', None)
+        self.save(state)
 
 
 def main(argv=None):
     from .security import SecurityError
     parser = argparse.ArgumentParser()
     parser.add_argument('operation', choices=['preflight', 'begin', 'finalize', 'commit', 'rollback', 'tick'])
+    parser.add_argument('--profile', choices=MANUAL_PROFILES)
     parser.add_argument('--token')
     parser.add_argument('--original-port', type=int)
     parser.add_argument('--client-address')
@@ -543,10 +668,10 @@ def main(argv=None):
         parser.error('Access handover requires root')
     try:
         if args.operation == 'preflight':
-            Host().bootstrap_preflight()
+            Host(profile=args.profile).bootstrap_preflight()
             result = {'status': 'prerequisites-verified'}
         else:
-            result = Transition().execute(args.operation, args.token, args.original_port, args.client_address)
+            result = Transition(profile=args.profile).execute(args.operation, args.token, args.original_port, args.client_address)
         print(json.dumps(result))
         return 0
     except (AccessError, SecurityError) as exc:
