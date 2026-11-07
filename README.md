@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="apex.ermnvldmr.com logo" src="./assets/logo.png" height="128" />
+  <img alt="apex.ermnvldmr.com logo" src="./etc/assets/logo.png" height="128" />
 </p>
 
 # [apex.ermnvldmr.com](https://apex.ermnvldmr.com)
@@ -40,6 +40,8 @@ if [ -f ./init.sh ]; then ./init.sh && source ~/.bashrc; fi
 ./commons/apex --help
 ```
 
+On existing checkouts that use the APEX Git hooks, run `git config --local core.hooksPath commons/scripts/githooks` from the node repository after updating the submodule.
+
 Configure the node in its checkout. For example, on a stock Debian Docker host:
 
 ```sh
@@ -67,10 +69,8 @@ You should understand the following invariants before exploring the codebase:
 
 - **[`actions/`](./actions)**: Built-in engine actions (`composition/`, `config/`, `repository/`, `tier/`, `util/`).
 - **[`compositions/`](./compositions)**: The shared core Compose stack (`traefik`, `socket-proxy`, `alloy`, `adguard`, `xray`, `restic`).
-- **[`engine/`](./engine)**: Framework engine — action discovery, overlay resolution, context injection, and logging.
-- **[`etc/`](./etc)**: Shared static configuration, including Alloy.
-- **[`ci/`](./ci)**: Host image build recipes, cloud-init templates, and image enrollment tooling.
-- **[`assets/`](./assets)**: Repository branding assets (`logo.png`).
+- **[`scripts/`](./scripts)**: Workstation bootstrap, the Python engine, host provisioning helpers, and Git hooks.
+- **[`etc/`](./etc)**: Shared configuration and static assets, including Alloy templates and the project logo.
 
 ---
 
@@ -141,21 +141,6 @@ On stock Debian the final policy allows only `adam` on port 2222 using a public 
 
 If a login fails, run `./commons/apex config/hardening rollback` from the checkout in the original session or let the timer restore the original SSH configuration five minutes after `begin`. Use `./commons/apex config/hardening status` to inspect the transition. [Action reference](https://docs.ermnvldmr.com/en/apex/reference/actions/#confighardening)
 
-### Infrastructure Administrator
-
-Build Debian 13 amd64 golden images with Packer, then supply node identity,
-operator keys, and the node repository through
-[`ci/cloud-init/user-data.template.yaml`](./ci/cloud-init/user-data.template.yaml)
-at first boot. Keep filled user-data and repository credentials outside Git.
-
-```sh
-packer init ci/packer/apex-debian-13.pkr.hcl
-packer validate ci/packer/apex-debian-13.pkr.hcl
-packer build ci/packer/apex-debian-13.pkr.hcl
-```
-
-Cloud-init runs the image's bundled enrollment helper. After enrollment, apply the individual `config/*` actions required by the node, then run `apex composition/run up`.
-
 ### Developer & Contributor
 
 Adding shared actions or improving the engine.
@@ -166,11 +151,10 @@ Adding shared actions or improving the engine.
   ```sh
   python3 -m venv .venv
   . .venv/bin/activate
-  python3 -m pip install ruff==0.17.2 'PyYAML>=6.0,<7'
+  python3 -m pip install ruff==0.17.2
   ```
-- **Verification**: `make check` runs lint and both the core and image provisioning suites. `make test` (or `bash tests/run.sh`) runs both suites; discovery limited to `tests/` omits provisioning. PyYAML is needed for the provisioning tests, not core execution. Environment integration tests use `docker compose` or standalone `docker-compose` with `config`; no daemon is needed.
+- **Verification**: `make check` runs lint and the core and host provisioning suites. `make test` (or `bash tests/run.sh`) runs both suites. Use `PYTHONPATH=scripts` when running individual test modules. Environment integration tests use `docker compose` or standalone `docker-compose` with `config`; no daemon is needed.
 - **Linting**: Ruff checks correctness and security rules. Existing import-order, line-length, compact-statement, and annotation-style debt is explicitly deferred in `pyproject.toml` to avoid unrelated formatting changes. Without Ruff, `make lint` recursively checks Python compilation and fails on syntax errors; that fallback is not equivalent to Ruff. `make fmt` formats files and is a separate, deliberate operation.
-- **Packer**: Run `packer init ci/packer/apex-debian-13.pkr.hcl` and `packer validate ci/packer/apex-debian-13.pkr.hcl` for template validation. A VM build or first-boot enrollment is a separate operation; unit tests and template validation do not demonstrate a deployed host.
 
 ---
 

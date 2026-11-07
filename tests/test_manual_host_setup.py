@@ -60,7 +60,7 @@ class HostSetup(unittest.TestCase):
     def test_installed_watchdog_survives_checkout_and_dispatches_cli_arguments(self):
         hardening = action("config/hardening")
         root = Path(__file__).resolve().parents[1]
-        installer = overlay.load_module(str(root / "ci/scripts/init-node/provisioning/manual_bundle.py"),
+        installer = overlay.load_module(str(root / "scripts/provisioning/manual_bundle.py"),
                                         "test_manual_bundle")
         with tempfile.TemporaryDirectory() as temp, patch.object(sys, "path", list(sys.path)):
             destination = installer.install(Path(temp).resolve())

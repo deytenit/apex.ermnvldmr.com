@@ -1,8 +1,0 @@
-{
-  "name": "ci-action-gitea-download-artifact",
-  "source": "https://github.com/christopherhx/gitea-download-artifact.git",
-  "requested_ref": "v4",
-  "commit": "75635f32b4c1c41c4b3d64e8f85210112ed4c9c7",
-  "path": "/private/tmp/gitea-migration-20261105/mirrors/ci-action-gitea-download-artifact.git",
-  "destination": "https://git.ermnvldmr.com/deytenit/ci-action-gitea-download-artifact"
-}

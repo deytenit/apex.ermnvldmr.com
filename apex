@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""apex launcher — stdlib only. Puts commons/ (+ vendor/ + proprietaries/) on sys.path."""
+"""apex launcher — stdlib only. Loads the shared engine and optional checkout libraries."""
 import os
 import sys
 
 _here = os.path.dirname(os.path.realpath(__file__))     # commons dir (or standalone repo root)
-sys.path.insert(0, _here)                               # make `engine` importable
+sys.path.insert(0, os.path.join(_here, "scripts"))
 _vendor = os.path.join(_here, "vendor")
 if os.path.isdir(_vendor):
     sys.path.insert(0, _vendor)

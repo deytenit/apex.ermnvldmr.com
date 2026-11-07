@@ -26,7 +26,7 @@ class ToolingTests(unittest.TestCase):
             sources = []
             (root / 'scripts').mkdir()
             (root / 'scripts/bootstrap-node').write_text('print(1)\n')
-            for name in ('engine', 'actions', 'tests', 'ci/scripts', 'scripts'):
+            for name in ('actions', 'tests', 'scripts'):
                 source = root / name / 'nested' / 'case.py'
                 source.parent.mkdir(parents=True)
                 source.write_text('value = 1\n')
@@ -49,7 +49,7 @@ class ToolingTests(unittest.TestCase):
     def test_suite_runner_discovers_both_suites_and_propagates_failures(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            suites = (root / 'tests', root / 'ci/scripts/init-node/tests')
+            suites = (root / 'tests', root / 'tests/provisioning')
             for suite in suites:
                 suite.mkdir(parents=True)
             shutil.copyfile(ROOT / 'tests/run.sh', suites[0] / 'run.sh')

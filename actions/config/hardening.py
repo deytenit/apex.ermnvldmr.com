@@ -174,7 +174,7 @@ def run(ctx, args):
     if operation == "begin":
         port, address = _original_endpoint(ctx, args)
         options.extend(["--original-port", str(port), "--client-address", address, "--token", uuid.uuid4().hex])
-        installer = Path(__file__).resolve().parents[2] / "ci/scripts/init-node/provisioning/manual_bundle.py"
+        installer = Path(__file__).resolve().parents[2] / "scripts/provisioning/manual_bundle.py"
         bundle = ctx.sys.sudo(["/usr/bin/python3", "-I", "-B", str(installer)], capture=True).stdout.strip()
     else:
         if not state:

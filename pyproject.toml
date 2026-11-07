@@ -7,7 +7,7 @@ license = { text = "BSD-2-Clause" }
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-dev = ["ruff==0.17.2", "PyYAML>=6.0,<7"]
+dev = ["ruff==0.17.2"]
 
 [tool.ruff]
 line-length = 100

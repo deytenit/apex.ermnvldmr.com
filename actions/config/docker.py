@@ -7,6 +7,6 @@ METADATA = Meta(summary="Verify a working Docker toolchain or install it on stoc
 
 
 def run(ctx, args):
-    provisioning = Path(ctx.paths.commons) / "ci/scripts/init-node"
-    ctx.sys.sudo(["python3", "-E", "-s", "-m", "provisioning.baseline", "--docker-policy"],
+    provisioning = Path(ctx.paths.commons) / "scripts"
+    ctx.sys.sudo(["python3", "-E", "-s", "-m", "provisioning.docker"],
                  cwd=str(provisioning))
