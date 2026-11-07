@@ -84,7 +84,7 @@ def _connection(ctx, *, after=None):
 def _operator_access(ctx):
     account = pwd.getpwnam("adam")
     if account.pw_uid < 1000 or account.pw_dir != "/home/adam":
-        raise RuntimeError("Configure a regular adam operator account first.")
+        raise RuntimeError("Prepare the adam account from your workstation with scripts/bootstrap-node first.")
     if pwd.getpwuid(os.getuid()).pw_name == "adam":
         return _connection(ctx)
     loginuid = int(Path("/proc/self/loginuid").read_text())

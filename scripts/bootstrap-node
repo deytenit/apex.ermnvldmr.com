@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Bootstrap a fleet node through a trusted OpenSSH connection."""
+
+import argparse
+import json
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+
+
+def repository(url):
+    if any(ch.isspace() or ord(ch) < 32 for ch in url):
+        raise ValueError("invalid repository URL")
+    if url.startswith("ssh://"):
+        parts = urlsplit(url)
+        if parts.password is not None or parts.query or parts.fragment:
+            raise ValueError("expected an SSH repository URL without password, query or fragment")
+        host, port, path = parts.hostname, parts.port, parts.path
+    else:
+        match = re.fullmatch(r"(?:[\w.-]+@)?(\[[\da-fA-F:]+\]|[\w.-]+):(.+)", url)
+        if not match:
+            raise ValueError("expected git@host:path or ssh://user@host[:port]/path")
+        host, path = match.groups()
+        host, port = host.strip("[]"), None
+    if not host or not re.fullmatch(r"[a-zA-Z0-9:][a-zA-Z0-9.:-]*", host) or not path:
+        raise ValueError("invalid Git host or repository path")
+    return f"[{host}]:{port}" if port not in (None, 22) else host, Path(path).name.removesuffix(".git")
+
+
+def keygen(args, data=None):
+    return subprocess.run(["ssh-keygen", *args], input=data or b"", capture_output=True)
+
+
+def bootstrap(args):
+    endpoint, basename = repository(args.repo)
+    name = args.node_name if args.node_name is not None else basename
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", name):
+        raise ValueError("invalid node name")
+    operator = args.operator_key.read_text().strip()
+    fields = operator.split()
+    if (len(operator.splitlines()) != 1 or len(fields) < 2
+            or keygen(["-lf", "-"], (" ".join(fields[:2]) + "\n").encode()).returncode):
+        raise ValueError("operator key must contain one plain SSH public key")
+    derived = keygen(["-y", "-P", "", "-f", str(args.deploy_key.resolve())])
+    if derived.returncode or derived.stdout.split()[0].startswith(b"sk-"):
+        raise ValueError("deploy key must be a standalone private key with no passphrase and owner-only permissions")
+    if derived.stdout.split()[:2] == [v.encode() for v in fields[:2]]:
+        raise ValueError("operator and deploy keys must be different")
+    matches = keygen(["-F", endpoint, "-f", str(args.known_hosts.resolve())])
+    pins = [line for line in matches.stdout.decode().splitlines() if line and not line.startswith("#")]
+    if matches.returncode or not pins or not any(
+        not pin.startswith("@revoked ") and keygen(["-lf", "-"], (pin + "\n").encode()).returncode == 0
+        for pin in pins
+    ):
+        raise ValueError(f"no usable known_hosts pin for {endpoint}")
+    payload = json.dumps(dict(operator_key=operator, deploy_key=args.deploy_key.read_text(),
+                              known_hosts="\n".join(pins) + "\n", repo_url=args.repo, node_name=name))
+    helper = Path(__file__).resolve().with_name("bootstrap-node-remote.py").read_text()
+    # Package management must never consume the credential payload on standard input.
+    remote = """set -e
+if [ "$(id -u)" = 0 ]; then set --; else set -- sudo -n --; fi
+if ! command -v python3 >/dev/null; then
+    test -f /etc/debian_version
+    "$@" apt-get -o DPkg::Lock::Timeout=60 update </dev/null
+    "$@" env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y python3 </dev/null
+fi
+exec "$@" python3 -I -c """ + shlex.quote(helper)
+    result = subprocess.run(["ssh", "-T", "-a", "-S", "none", "-o", "StrictHostKeyChecking=yes",
+                           "-o", "ClearAllForwardings=yes", "--", args.target, remote],
+                          input=payload.encode())
+    if result.returncode == 0:
+        print(f"Checkout ready for adam at /srv/{name}.")
+    return result.returncode
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", required=True, help="trusted SSH target with root or noninteractive sudo")
+    parser.add_argument("--repo", required=True, help="SSH URL of the node repository")
+    parser.add_argument("--operator-key", required=True, type=Path, help="operator public key")
+    parser.add_argument("--deploy-key", required=True, type=Path, help="repository deploy private key")
+    parser.add_argument("--known-hosts", required=True, type=Path, help="trusted Git server host keys")
+    parser.add_argument("--node-name", help="defaults to repository basename without .git")
+    args = parser.parse_args()
+    try:
+        return bootstrap(args)
+    except (OSError, ValueError) as exc:
+        parser.exit(1, f"bootstrap-node: {exc}\n")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

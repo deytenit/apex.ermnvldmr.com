@@ -24,7 +24,9 @@ class ToolingTests(unittest.TestCase):
             (binaries / 'python3').symlink_to(sys.executable)
             environment = dict(os.environ, PATH=str(binaries))
             sources = []
-            for name in ('engine', 'actions', 'tests', 'ci/scripts'):
+            (root / 'scripts').mkdir()
+            (root / 'scripts/bootstrap-node').write_text('print(1)\n')
+            for name in ('engine', 'actions', 'tests', 'ci/scripts', 'scripts'):
                 source = root / name / 'nested' / 'case.py'
                 source.parent.mkdir(parents=True)
                 source.write_text('value = 1\n')

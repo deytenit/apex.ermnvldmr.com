@@ -13,19 +13,36 @@ Local infrastructure operations for independently owned nodes, with a Python sta
 - **Report an Issue**: <https://git.ermnvldmr.com/deytenit/apex.ermnvldmr.com/issues>
 - **License**: [BSD-2-Clause](#copyright--license)
 
+From an APEX checkout on your workstation, connect to the installed Debian or Proxmox VE host as root or as a user with passwordless sudo. The workstation needs Python 3.10 or newer and OpenSSH. The script installs Python 3 through APT if the host lacks it. Verify its SSH host key through a trusted channel and record it in your workstation’s SSH known hosts before connecting.
+
 ```sh
-# Clone your node's repository (which pins apex as commons/)
-cd /srv
-git clone --recurse-submodules ssh://git@git.example.com:22222/infrastructure/selfhost.example.com.git
-cd selfhost.example.com && ./init.sh && source ~/.bashrc
+scripts/bootstrap-node \
+  --target root@node.example.com \
+  --repo ssh://git@git.example.com:22222/infrastructure/selfhost.example.com.git \
+  --operator-key ~/.ssh/operator.pub \
+  --deploy-key ~/.ssh/selfhost-deploy \
+  --known-hosts ~/.ssh/git-known-hosts
+```
 
-# Configure node identity
-cat > node.env <<'EOF'
-APEX_NODE_FQDN=selfhost.example.com
-APEX_NODE_HOST=selfhost.example.com
-APEX_SUBNET=198.18.0.0/24
-EOF
+The operator public key grants SSH access to `adam`, who receives passwordless sudo. Use a separate, passphrase-free SSH deploy key for this node. Register its public half as a deploy key on the Git server before running the script. The script installs the private half on the node. The key must have read access to the node repository and any private SSH submodules it needs on that Git server. Grant write access to the node repository only if you use `apex repository/sync` to push changes. Supply verified Git server host keys in OpenSSH known_hosts format, including the port for nonstandard listeners (for example, `[git.example.com]:22222`).
 
+The script clones the repository under `/srv` as `adam`. Use `--node-name NAME` to choose the checkout directory under `/srv`. Before changing the SSH policy, log in with the matching operator private key on the original SSH port. Use the same host or SSH alias as the bootstrap target.
+
+```sh
+ssh -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -i ~/.ssh/operator adam@node.example.com
+```
+
+In that session, enter the checkout. If the node repository includes `init.sh`, review and run it to install the shell shortcuts. Otherwise call `./commons/apex` directly.
+
+```sh
+cd /srv/selfhost.example.com
+if [ -f ./init.sh ]; then ./init.sh && source ~/.bashrc; fi
+./commons/apex --help
+```
+
+Configure the node in its checkout. For example, on a stock Debian Docker host:
+
+```sh
 # Stock Debian Docker host, after configuring the node repository
 apex config/packages
 apex config/base
@@ -113,15 +130,6 @@ Choose one output mode per invocation.
 Run each setup action explicitly from the node checkout. Use `apex --help` to list the shared and node-owned actions. New actions follow `<singular-entity>/<action>`. Use `apex <entity>/<action> --help` for the arguments.
 
 On an installed Proxmox VE host, `config/packages` installs the administrator tools and `config/base` applies APT and journald policy. The PVE host keeps its own storage, networking, firewall, and management listeners. Run workload configuration inside the guest that owns the service.
-
-To set up the operator on either platform, start with an account that can administer the host:
-
-```sh
-apex config/adam --public-key-file /path/to/operator.pub
-apex repository/chown
-```
-
-`config/adam` grants passwordless sudo. `repository/chown` gives adam ownership of the tracked checkout directly under `/srv` and its Git metadata.
 
 Before moving SSH to port 2222, allow inbound TCP/2222 from the operator’s address through the provider firewall and the node’s firewall (UFW on stock Debian or the PVE firewall). Keep the original administrator session open throughout the transition.
 

@@ -5,9 +5,10 @@ test:
 
 lint:
 	@if command -v ruff >/dev/null 2>&1; then \
-		ruff check .; \
+		ruff check . scripts/bootstrap-node; \
 	else \
-		python3 -m compileall -q engine actions tests ci/scripts && \
+		python3 -m compileall -q engine actions tests ci/scripts scripts && \
+		python3 -m py_compile scripts/bootstrap-node && \
 		echo "ruff not installed in PATH; verified python bytecode compilation."; \
 	fi
 
