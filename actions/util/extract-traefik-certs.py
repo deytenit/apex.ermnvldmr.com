@@ -1,5 +1,5 @@
-# actions/utils/extract-traefik-certs.py
-"""Port of utils/extract-traefik-certs — dump traefik v3 acme.json to pem via docker."""
+# actions/util/extract-traefik-certs.py
+"""Port of util/extract-traefik-certs — dump traefik v3 acme.json to pem via docker."""
 import os
 from engine.descriptor import Meta, Arg
 

@@ -1,5 +1,5 @@
-# actions/configure/ufw.py
-"""Port of configure/ufw — apply docker + host ufw rules from configs/ufw."""
+# actions/config/ufw.py
+"""Port of config/ufw — apply docker + host ufw rules from configs/ufw."""
 import os
 from engine.descriptor import Meta, Flag
 

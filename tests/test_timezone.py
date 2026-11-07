@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('timezone_action', ROOT / 'actions/configure/timezone.py')
+spec = importlib.util.spec_from_file_location('timezone_action', ROOT / 'actions/config/timezone.py')
 action = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(action)
 

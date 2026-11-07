@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Service configuration and credentials are deployed later by apex configure/alloy.
+# Service configuration and credentials are deployed later by apex config/alloy.
 alloy_version=1.21.3
 alloy_sha256=dbbd705de8ab37dec0cbd6361a3fc7e754d6b2854b57ce672a83e6366199ba73
 [[ "$(dpkg --print-architecture)" == amd64 ]]

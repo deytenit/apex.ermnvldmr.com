@@ -13,6 +13,22 @@ class TestCli(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("Available actions", r.stdout)
 
+    def test_compose_alias_uses_canonical_action(self):
+        canonical = run("composition/run", "--help")
+        self.assertEqual(canonical.returncode, 0)
+        alias = run("compose", "--help")
+        self.assertEqual(alias.returncode, 0)
+        self.assertEqual(alias.stdout, canonical.stdout)
+
+    def test_configuration_must_be_selected_explicitly(self):
+        listing = run("--help")
+        self.assertIn("config/hardening", listing.stdout)
+        self.assertIn("repository/chown", listing.stdout)
+        for command in ("configure", "config"):
+            result = run(command)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Unknown action", result.stderr)
+
     def test_unknown_action_exits_one(self):
         r = run("no/such")
         self.assertEqual(r.returncode, 1)

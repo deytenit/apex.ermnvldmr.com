@@ -13,7 +13,7 @@ This skill guides the safe, structured update of container images, compose defin
 2. **Hold critical services**: Always ask the user which services or compositions must NOT be touched before discovering or updating images.
 3. **Classify update scope**: Separate updates into **Minor/Patch** (non-breaking), **Major** (breaking / schema migration risks), and **Unstable SemVer / CalVer** (requiring changelog scrutiny).
 4. **Gate major and breaking updates**: Never apply a Major version bump, SemVer `0.x` minor change, or CalVer jump without migration research and explicit user approval.
-5. **Preserve APEX engine context**: Always orchestrate compose actions through `./commons/apex compose` (or with derived `APEX_*` variables and layered env files) rather than bare `docker compose`.
+5. **Preserve APEX engine context**: Always orchestrate compose actions through `./commons/apex composition/run` (or with derived `APEX_*` variables and layered env files) rather than bare `docker compose`.
 6. **Safeguard in-tree patches**: Do not bump images for containers with host bind mounts that patch application source code without explicit review.
 7. **Verify fleet observability post-rollout**: An update is not complete until containers reach `Up` and `healthy`, logs are clean, Prometheus scrape targets report `UP`, blackbox probes pass, and remote write streams are established.
 
@@ -145,7 +145,7 @@ For each node:
 1. **Pre-upgrade backup**:
    - Trigger a backup of stateful volumes:
      ```bash
-     ssh <node> "apex backup/run"
+     ssh <node> "apex tier/backup"
      ```
    - For database services being updated, execute an in-container logical export to host storage.
 2. **Update image tags in compose definitions**:
@@ -153,12 +153,12 @@ For each node:
 3. **Pull and recreate services via APEX CLI**:
    - Always run through the node's APEX CLI to preserve derived `APEX_*` variables and layered env files:
      ```bash
-     ssh <node> "cd /srv/<node_fqdn> && ./commons/apex compose pull"
-     ssh <node> "cd /srv/<node_fqdn> && ./commons/apex compose up -d"
+     ssh <node> "cd /srv/<node_fqdn> && ./commons/apex composition/run pull"
+     ssh <node> "cd /srv/<node_fqdn> && ./commons/apex composition/run up -d"
      ```
    - *Note on `--force-recreate`*: When updating containers using floating tags, recovering from host reboots, or handling services with `tmpfs` state (e.g. mail spools), pass `--force-recreate` to ensure the container entrypoint runs a clean initialization:
      ```bash
-     ssh <node> "cd /srv/<node_fqdn> && ./commons/apex compose up -d --force-recreate"
+     ssh <node> "cd /srv/<node_fqdn> && ./commons/apex composition/run up -d --force-recreate"
      ```
 4. **Completion check**: Compose commands finish with exit code 0.
 
@@ -195,7 +195,7 @@ When the update scope includes host operating system packages:
      2. Reboot node: `ssh <node> "sudo reboot"`
      3. Wait for SSH availability: poll connectivity with timeout.
      4. After boot, verify systemd state (`systemctl is-system-running`) and check that Docker containers auto-started.
-     5. If services with `tmpfs` mounts fail startup checks (e.g. Postfix spool directories in mail containers), run `./commons/apex compose up -d --force-recreate`.
+     5. If services with `tmpfs` mounts fail startup checks (e.g. Postfix spool directories in mail containers), run `./commons/apex composition/run up -d --force-recreate`.
 6. **Completion check**: Host packages are up to date and node is online.
 
 ---
@@ -229,6 +229,6 @@ Immediately after recreation and host reboots on each node:
    - If a container enters a crash loop (`Restarting`, `Exit 1`) or breaks ingress:
      1. Capture failure logs.
      2. Revert the image tag in the compose file to the prior tag.
-     3. Re-run `./commons/apex compose up -d --force-recreate`.
+     3. Re-run `./commons/apex composition/run up -d --force-recreate`.
      4. Notify user immediately with logs and root cause.
 6. **Completion check**: All containers are confirmed `Up` and `healthy`, external ingress functions normally, and telemetry metrics/targets are green.

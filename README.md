@@ -15,6 +15,7 @@ Local infrastructure operations for independently owned nodes, with a Python sta
 
 ```sh
 # Clone your node's repository (which pins apex as commons/)
+cd /srv
 git clone --recurse-submodules ssh://git@git.example.com:22222/infrastructure/selfhost.example.com.git
 cd selfhost.example.com && ./init.sh && source ~/.bashrc
 
@@ -25,9 +26,13 @@ APEX_NODE_HOST=selfhost.example.com
 APEX_SUBNET=198.18.0.0/24
 EOF
 
-# Configure host baseline and bring up compositions
-apex configure        # firewall, crowdsec, cron, systemd, routing
-apex compose up       # bring node services online
+# Stock Debian Docker host, after configuring the node repository
+apex config/packages
+apex config/base
+apex config/docker
+apex config/ufw-docker
+apex config/ufw       # apply the node firewall rules
+apex composition/run up       # bring node services online
 ```
 
 ## Essential Information
@@ -43,7 +48,7 @@ You should understand the following invariants before exploring the codebase:
 
 ### Repository Structure
 
-- **[`actions/`](./actions)**: Built-in engine actions (`compose.py`, `configure/`, `sync/`, `tiers/`, `backup/`, `utils/`).
+- **[`actions/`](./actions)**: Built-in engine actions (`composition/`, `config/`, `repository/`, `tier/`, `util/`).
 - **[`compositions/`](./compositions)**: The shared core Compose stack (`traefik`, `socket-proxy`, `alloy`, `adguard`, `xray`, `restic`).
 - **[`engine/`](./engine)**: Framework engine — action discovery, overlay resolution, context injection, and logging.
 - **[`etc/`](./etc)**: Shared static configuration, including Alloy.
@@ -60,20 +65,21 @@ Running and maintaining services on an existing host.
 
 - **Requirements**: Debian-based host with Docker, Docker Compose v2, Git, and Python 3.
 - **Workflow**:
-  - Update services: `apex compose pull && apex compose up`
-  - Run backups: `apex backup/run`
-  - Sync repository state: `apex sync/repository`
+  - Update services: `apex composition/run pull && apex composition/run up`
+  - Run backups: `apex tier/backup`
+  - Sync repository state: `apex repository/sync`
 
 Target a composition explicitly when operating on one application:
 
 ```sh
-apex compose -p apex restart traefik
-apex compose -p app up -d
-apex compose --dry-run -p apex logs --tail 20 xray
+apex composition/run -p apex restart traefik
+apex composition/run -p app up -d
+apex composition/run --dry-run -p apex logs --tail 20 xray
 ```
 
+The existing `apex compose` spelling is an alias for `apex composition/run`.
 Wrapper options precede the action; remaining arguments go to Docker Compose.
-The positional forms `apex compose restart apex traefik` and `apex compose up -d apex`
+The positional forms `apex composition/run restart apex traefik` and `apex composition/run up -d apex`
 remain supported. Use `-p` when service names or option values could be mistaken
 for composition names. Without a target, APEX visits core first, then other
 compositions alphabetically; `down` reverses that order.
@@ -84,7 +90,7 @@ after changing a container definition; `restart` retains the existing definition
 For direct Docker Compose use in the core composition:
 
 ```sh
-apex env --sync
+apex config/env --sync
 cd compositions/apex
 docker compose config --quiet
 docker compose restart traefik
@@ -96,11 +102,26 @@ profiles) followed by synthesized node/path values, and writes with mode `0600`.
 Resync after changing `apex.env`, node identity, or tier paths. Shell environment
 values still take precedence in Docker Compose. Do not edit the generated block.
 
-`eval "$(apex env)"` exports synthesized APEX values to the current shell;
-`apex env --dotenv` prints dotenv syntax, and `apex env --write generated.env`
+`eval "$(apex config/env)"` exports synthesized APEX values to the current shell;
+`apex config/env --dotenv` prints dotenv syntax, and `apex config/env --write generated.env`
 writes those values to a separate file. These three modes do not merge the
 composition's secrets or `apex.env`; use `--sync` for the complete core bridge.
 Choose one output mode per invocation.
+
+### Preparing an existing host
+
+Run each setup action explicitly from the node checkout. Use `apex --help` to list the shared and node-owned actions. New actions follow `<singular-entity>/<action>`. Use `apex <entity>/<action> --help` for the arguments.
+
+On an installed Proxmox VE host, `config/packages` installs the administrator tools and `config/base` applies APT and journald policy. The PVE host keeps its own storage, networking, firewall, and management listeners. Run workload configuration inside the guest that owns the service.
+
+To set up the operator on either platform, start with an account that can administer the host:
+
+```sh
+apex config/adam --public-key-file /path/to/operator.pub
+apex repository/chown
+```
+
+`config/adam` grants passwordless sudo. `repository/chown` gives adam ownership of the tracked checkout directly under `/srv` and its Git metadata. Open a new SSH connection as adam with the operator key and run `./commons/apex config/hardening` from the checkout in that session. An independent administrator login can also run the action after the operator’s authorized key and sudo access are configured. It applies the SSH public-key policy for adam and preserves the platform's existing management ports and other logins.
 
 ### Infrastructure Administrator
 
@@ -115,8 +136,7 @@ packer validate ci/packer/apex-debian-13.pkr.hcl
 packer build ci/packer/apex-debian-13.pkr.hcl
 ```
 
-Cloud-init runs the image's bundled enrollment helper. After enrollment, run
-`apex configure` and `apex compose up` on the node.
+Cloud-init runs the image's bundled enrollment helper. After enrollment, apply the individual `config/*` actions required by the node, then run `apex composition/run up`.
 
 ### Developer & Contributor
 

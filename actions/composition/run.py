@@ -1,8 +1,8 @@
-# actions/compose.py
+# actions/composition/run.py
 """Orchestrate docker compose across the node.
 
 Supports targeting all compositions in sequence (default: apex core first, services next;
-reverse on down) or targeting one with `apex compose -p apex restart traefik`.
+reverse on down) or targeting one with `apex composition/run -p apex restart traefik`.
 Wrapper options precede the action. Exports derived APEX_* vars and layers env files.
 """
 import os

@@ -9,10 +9,12 @@ from __future__ import annotations
 import ast
 import importlib.util
 import os
+import re
 from dataclasses import dataclass
 from typing import List, Optional
 
 ACTION_EXT = ".py"
+ACTION_NAME = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+")
 
 
 @dataclass
@@ -40,11 +42,15 @@ def _rel_names(root: Optional[str]):
                 continue
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, root)[: -len(ACTION_EXT)]
-            out[rel.replace(os.sep, "/")] = full
+            name = rel.replace(os.sep, "/")
+            if ACTION_NAME.fullmatch(name):
+                out[name] = full
     return out
 
 
 def resolve(name: str, commons_root: str, prop_root: Optional[str]) -> Optional[Resolved]:
+    if not ACTION_NAME.fullmatch(name):
+        return None
     rel = name + ACTION_EXT
     commons_path = os.path.join(commons_root, rel)
     c = os.path.isfile(commons_path)

@@ -1,5 +1,5 @@
-# actions/tiers/link.py
-"""Port of tiers/link — @tier symlink structure for the node + each composition project."""
+# actions/tier/link.py
+"""Port of tier/link — @tier symlink structure for the node + each composition project."""
 import os
 from engine.descriptor import Meta, Arg
 

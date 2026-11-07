@@ -1,5 +1,5 @@
-# actions/configure/routing.py
-"""Port of configure/routing — idempotent node routing (ip_forward, fwmark rule, table 100)."""
+# actions/config/routing.py
+"""Port of config/routing — idempotent node routing (ip_forward, fwmark rule, table 100)."""
 from engine.descriptor import Meta
 
 METADATA = Meta(summary="Idempotent node-level routing rules and routes.")

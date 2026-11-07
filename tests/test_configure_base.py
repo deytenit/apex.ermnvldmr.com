@@ -16,16 +16,22 @@ from engine import overlay
 from engine.lib.host import Host
 from engine.lib.sys import Sys
 
-base = overlay.load_module(
-    str(Path(__file__).resolve().parents[1] / "actions/configure/base.py"),
+packages = overlay.load_module(
+    str(Path(__file__).resolve().parents[1] / "actions/config/packages.py"),
     "apex_test_configure_base",
+)
+
+
+helper = overlay.load_module(
+    str(Path(__file__).resolve().parents[1] / "actions/config/ufw-docker.py"),
+    "apex_test_ufw_docker",
 )
 
 
 class TestBasePackages(unittest.TestCase):
     def setUp(self):
         self.system = Mock()
-        self.installed = set(base.BASE_PACKAGES)
+        self.installed = set(packages.BASE_PACKAGES)
         self.system.run.side_effect = self.query
         self.system.sudo.return_value = subprocess.CompletedProcess([], 0, stdout="")
 
@@ -35,7 +41,7 @@ class TestBasePackages(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0, stdout=status)
 
     def test_installed_rsyslog_and_ufw_do_not_require_executable_or_apt_update(self):
-        base._install_missing(self.system, base.BASE_PACKAGES)
+        packages._install_missing(self.system, packages.BASE_PACKAGES)
         self.assertEqual({call.args[0][-1] for call in self.system.run.call_args_list},
                          {"curl", "wget", "git", "rsyslog", "ufw"})
         self.system.sudo.assert_not_called()
@@ -45,7 +51,7 @@ class TestBasePackages(unittest.TestCase):
         self.system.sudo.return_value = subprocess.CompletedProcess(
             [], 0, stdout="Inst ufw (0.36.2 Debian:13 [all])\nConf ufw (0.36.2 Debian:13 [all])\n",
         )
-        base._install_missing(self.system, base.BASE_PACKAGES)
+        packages._install_missing(self.system, packages.BASE_PACKAGES)
         commands = [call.args[0] for call in self.system.sudo.call_args_list]
         self.assertEqual(len(commands), 3)
         self.assertIn("update", commands[0])
@@ -79,7 +85,7 @@ class TestBasePackages(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout=plan)
 
         with patch("engine.lib.sys.subprocess.run", side_effect=filtered_sudo):
-            base._install_missing(Sys(Mock()), ["ufw"])
+            packages._install_missing(Sys(Mock()), ["ufw"])
         self.assertEqual(len(operations), 3)
         self.assertIn("update", operations[0])
         self.assertIn("--simulate", operations[1])
@@ -94,13 +100,13 @@ class TestBasePackages(unittest.TestCase):
                 self.system.sudo.reset_mock()
                 self.system.sudo.return_value = subprocess.CompletedProcess([], 0, stdout=plan)
                 with self.assertRaisesRegex(RuntimeError, "upgrades/removals"):
-                    base._install_missing(self.system, base.BASE_PACKAGES)
+                    packages._install_missing(self.system, packages.BASE_PACKAGES)
                 self.assertEqual(self.system.sudo.call_count, 2)
 
     def test_failed_package_query_is_not_treated_as_installed(self):
         self.system.run.return_value = subprocess.CompletedProcess([], 1, stdout="")
         self.system.run.side_effect = None
-        base._install_missing(self.system, ["rsyslog"])
+        packages._install_missing(self.system, ["rsyslog"])
         self.assertEqual(self.system.sudo.call_args.args[0][-1], "rsyslog")
 
 
@@ -131,9 +137,9 @@ class TestPinnedHelper(unittest.TestCase):
         # Model root-owned ancestry without sudo/chown; content, modes and links stay real.
         self.addCleanup(patch.stopall)
         patch.object(Path, "lstat", autospec=True, side_effect=root_lstat).start()
-        patch.object(base, "UFW_DOCKER_PATH", self.path).start()
-        patch.object(base, "UFW_DOCKER_SHA256", hashlib.sha256(self.payload).hexdigest()).start()
-        self.download = patch.object(base.urllib.request, "urlopen").start()
+        patch.object(helper, "UFW_DOCKER_PATH", self.path).start()
+        patch.object(helper, "UFW_DOCKER_SHA256", hashlib.sha256(self.payload).hexdigest()).start()
+        self.download = patch.object(helper.urllib.request, "urlopen").start()
         self.download.return_value = io.BytesIO(self.payload)
 
     def sudo(self, command, **kwargs):
@@ -150,27 +156,27 @@ class TestPinnedHelper(unittest.TestCase):
 
     def test_verified_existing_helper_executes_without_download(self):
         self.write_helper()
-        base._install_helper(self.ctx)
+        helper._install_helper(self.ctx)
         self.download.assert_not_called()
         self.assertEqual(self.system.sudo.call_args.args[0], [str(self.path), "install"])
         self.assertEqual(self.system.sudo.call_count, 1)
 
     def test_wrong_executable_content_is_replaced_only_with_verified_download(self):
         self.write_helper(b"#!/bin/sh\necho wrong\n")
-        base._install_helper(self.ctx)
+        helper._install_helper(self.ctx)
         self.assertEqual(self.path.read_bytes(), self.payload)
         self.assertEqual(self.system.sudo.call_count, 2)
-        self.download.assert_called_once_with(base.UFW_DOCKER_URL, timeout=30)
+        self.download.assert_called_once_with(helper.UFW_DOCKER_URL, timeout=30)
 
     def test_missing_helper_is_published_with_executable_mode(self):
-        base._install_helper(self.ctx)
+        helper._install_helper(self.ctx)
         self.assertEqual(self.path.read_bytes(), self.payload)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o755)
         self.assertEqual(list(self.path.parent.iterdir()), [self.path])
 
     def test_verified_nonexecutable_content_is_reused_and_mode_repaired(self):
         self.write_helper(mode=0o600)
-        base._install_helper(self.ctx)
+        helper._install_helper(self.ctx)
         self.download.assert_not_called()
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o755)
         self.assertEqual(self.system.sudo.call_count, 2)
@@ -178,7 +184,7 @@ class TestPinnedHelper(unittest.TestCase):
     def test_bad_checksum_never_publishes_or_executes(self):
         self.download.return_value = io.BytesIO(b"not the pinned helper")
         with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
-            base._install_helper(self.ctx)
+            helper._install_helper(self.ctx)
         self.system.sudo.assert_not_called()
         self.assertFalse(self.path.exists())
 
@@ -186,13 +192,13 @@ class TestPinnedHelper(unittest.TestCase):
         self.write_helper(b"old unknown executable")
         self.download.return_value = io.BytesIO(b"bad download")
         with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
-            base._install_helper(self.ctx)
+            helper._install_helper(self.ctx)
         self.system.sudo.assert_not_called()
         self.assertEqual(self.path.read_bytes(), b"old unknown executable")
 
     def assert_rejected_before_network_or_sudo(self):
         with self.assertRaisesRegex(RuntimeError, "Unsafe ufw-docker"):
-            base._install_helper(self.ctx)
+            helper._install_helper(self.ctx)
         self.download.assert_not_called()
         self.system.sudo.assert_not_called()
 
@@ -219,9 +225,9 @@ class TestPinnedHelper(unittest.TestCase):
 
     def test_unsafe_helper_preflight_precedes_package_network_or_mutation(self):
         self.path.parent.chmod(0o777)
-        with patch.object(base.os.path, "isfile", return_value=True):
+        with patch.object(helper.os.path, "isfile", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "Unsafe ufw-docker"):
-                base.run(self.ctx, None)
+                helper.run(self.ctx, None)
         self.download.assert_not_called()
         self.system.run.assert_not_called()
         self.system.sudo.assert_not_called()
@@ -260,7 +266,7 @@ class TestPinnedHelper(unittest.TestCase):
 
         self.download.side_effect = download
         with self.assertRaisesRegex(RuntimeError, "Unsafe ufw-docker"):
-            base._install_helper(self.ctx)
+            helper._install_helper(self.ctx)
         self.system.sudo.assert_not_called()
 
     def test_changed_content_after_publication_is_not_executed(self):
@@ -273,7 +279,7 @@ class TestPinnedHelper(unittest.TestCase):
 
         self.system.sudo.side_effect = tamper
         with self.assertRaisesRegex(RuntimeError, "verification failed"):
-            base._install_helper(self.ctx)
+            helper._install_helper(self.ctx)
         self.assertEqual(self.system.sudo.call_count, 1)
 
 

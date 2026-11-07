@@ -91,12 +91,13 @@ def preflight(*, strict=True):
 
 
 def package_versions():
+    architecture = run(["dpkg", "--print-architecture"]).stdout.strip()
     result = run(["dpkg-query", "-W", "-f=${binary:Package}\t${Status}\t${Version}\n"])
     installed = {}
     for line in result.stdout.splitlines():
         fields = line.split("\t")
         if len(fields) == 3 and fields[1].split()[1:] == ["ok", "installed"]:
-            installed[fields[0].removesuffix(":amd64")] = fields[2]
+            installed[fields[0].removesuffix(":" + architecture)] = fields[2]
     return installed
 
 
@@ -311,6 +312,88 @@ def docker_preflight(installed):
     return {**config, **DOCKER_CONFIG}
 
 
+DOCKER_KEY_SHA256 = "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+LOCAL_DOCKER = ["docker", "--host", "unix:///var/run/docker.sock"]
+
+
+def _docker_source(arch):
+    key = Path("/etc/apt/keyrings/apex-docker.asc")
+    source = Path("/etc/apt/sources.list.d/apex-docker.sources")
+    content = ("Types: deb\nURIs: https://download.docker.com/linux/debian\nSuites: trixie\n"
+               f"Components: stable\nArchitectures: {arch}\nSigned-By: {key}\n")
+    for path in (key, source):
+        if any(part.is_symlink() for part in (path, *path.parents)):
+            raise BaselineError(f"Refusing redirected APT path: {path}")
+    if source.exists() and source.read_text() != content:
+        raise BaselineError(f"Reconcile existing Docker repository configuration: {source}")
+    if key.exists():
+        data = key.read_bytes()
+    else:
+        url = "https://download.docker.com/linux/debian/gpg"
+        with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310
+            data = response.read(1024 * 1024)
+    if hashlib.sha256(data).hexdigest() != DOCKER_KEY_SHA256:
+        raise BaselineError("Docker repository signing key differs from the pinned release key.")
+    write_managed(key, data)
+    write_managed(source, content)
+
+
+def _docker_capabilities(root, *, complete_plugins=False):
+    capabilities = {"docker_data_root": root}
+    plugins = {"docker-compose-plugin": ("compose", ["compose", "version", "--short"]),
+               "docker-buildx-plugin": ("buildx", ["buildx", "version"])}
+    missing = []
+    for package, (name, args) in plugins.items():
+        result = run([*LOCAL_DOCKER, *args], check=False)
+        if result.returncode or not result.stdout.strip():
+            missing.append(package)
+        else:
+            capabilities[name] = result.stdout.strip()
+    if missing:
+        if complete_plugins and "docker-ce" in package_versions():
+            with service_start_guard():
+                install_missing(missing)
+            return _docker_capabilities(root)
+        raise BaselineError("Existing Docker needs functional plugins: " + ", ".join(missing))
+    if not root:
+        raise BaselineError("Unable to verify the local Docker data-root.")
+    return capabilities
+
+
+@expected_errors
+def apply_docker_policy():
+    if Path("/usr/bin/pveversion").exists():
+        raise BaselineError("Docker installation on a Proxmox host requires separate administration.")
+    release = dict(line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines()
+                   if "=" in line and not line.startswith("#"))
+    arch = run(["dpkg", "--print-architecture"]).stdout.strip()
+    if (release.get("ID", "").strip('"') != "debian" or
+            release.get("VERSION_ID", "").strip('"') != "13" or arch not in ("amd64", "arm64")):
+        raise BaselineError("Docker installation supports stock Debian 13 amd64 or arm64.")
+    info = [*LOCAL_DOCKER, "info", "--format", "{{.DockerRootDir}}"]
+    if shutil.which("docker"):
+        current = run(info, check=False)
+        if current.returncode == 0:
+            return _docker_capabilities(current.stdout.strip(), complete_plugins=True)
+    installed = package_versions()
+    source = Path("/etc/apt/sources.list.d/apex-docker.sources")
+    if (not source.exists() and
+            (shutil.which("docker") or set(DOCKER_PACKAGES).intersection(installed))):
+        raise BaselineError("Existing Docker installation is inactive; reconcile it before retrying.")
+    config = docker_preflight(installed)
+    with service_start_guard():
+        install_missing(("ca-certificates",))
+        _docker_source(arch)
+        write_managed("/etc/docker/daemon.json", json.dumps(config, indent=2) + "\n")
+        install_missing(DOCKER_PACKAGES)
+    ensure_service("containerd")
+    ensure_service("docker")
+    root = run(info).stdout.strip()
+    if root != DOCKER_CONFIG["data-root"]:
+        raise BaselineError("Docker started with an unexpected data-root; inspect its configuration.")
+    return _docker_capabilities(root)
+
+
 def configure_sources():
     write_managed("/etc/apt/sources.list.d/apex-zfs.sources",
                   "Types: deb\nURIs: https://deb.debian.org/debian\nSuites: trixie\n"
@@ -418,7 +501,7 @@ def repair_bouncer_credentials():
 
 @expected_errors
 def apply_base_policy():
-    """The bounded configure/base policy: no Docker, storage or enrollment."""
+    """Apply the base package, logging, and firewall policy."""
     preflight(strict=False)
     with service_start_guard(), security_service_guard(BASE_PACKAGES):
         install_missing(BASE_PACKAGES)
@@ -478,11 +561,19 @@ if __name__ == "__main__":
     import argparse
     from .state import ProvisionError, exclusive_lock
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-policy", action="store_true")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--base-policy", action="store_true")
+    scope.add_argument("--docker-policy", action="store_true")
     args = parser.parse_args()
     try:
-        preflight(strict=not args.base_policy)
+        preflight(strict=not (args.base_policy or args.docker_policy))
         with exclusive_lock("/var/lib/apex-init/init.lock"):
-            print(json.dumps(apply_base_policy() if args.base_policy else apply_baseline(), sort_keys=True))
+            if args.docker_policy:
+                result = apply_docker_policy()
+            elif args.base_policy:
+                result = apply_base_policy()
+            else:
+                result = apply_baseline()
+            print(json.dumps(result, sort_keys=True))
     except (BaselineError, OSError, ProvisionError) as exc:
         parser.exit(1, f"Baseline failed: {exc}\n")

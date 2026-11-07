@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from engine import overlay
 
-backup = overlay.load_module(str(Path(__file__).resolve().parents[1] / 'actions/backup/run.py'),
+backup = overlay.load_module(str(Path(__file__).resolve().parents[1] / 'actions/tier/backup.py'),
                              'test_backup_action')
 
 

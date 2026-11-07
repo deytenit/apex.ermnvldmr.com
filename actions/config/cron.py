@@ -1,5 +1,5 @@
-# actions/configure/cron.py
-"""Port of configure/cron — install crontab from configs/cron/crontab."""
+# actions/config/cron.py
+"""Port of config/cron — install crontab from configs/cron/crontab."""
 import os
 from engine.descriptor import Meta, Flag
 

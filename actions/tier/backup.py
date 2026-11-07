@@ -1,4 +1,4 @@
-# actions/backup/run.py
+# actions/tier/backup.py
 """Label-driven restic backup via resticontainer (git.ermnvldmr.com/deytenit/resticontainer).
 Runs the resticontainer core service one-shot: init-if-needed -> backup (discovers
 `restic.*`-labelled services, runs their pre-hooks/stops, snapshots the union of the

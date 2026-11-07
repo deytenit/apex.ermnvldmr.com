@@ -1,5 +1,5 @@
 # engine/lib/crowdsec.py
-"""ctx.crowdsec — install + config deploy + collections (port of configure/crowdsec)."""
+"""ctx.crowdsec — install + config deploy + collections (port of config/crowdsec)."""
 from __future__ import annotations
 import os
 import shutil

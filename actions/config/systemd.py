@@ -1,5 +1,5 @@
-# actions/configure/systemd.py
-"""Port of configure/systemd — deploy + enable units from configs/systemd."""
+# actions/config/systemd.py
+"""Port of config/systemd — deploy + enable units from configs/systemd."""
 import os
 from engine.descriptor import Meta, Flag
 

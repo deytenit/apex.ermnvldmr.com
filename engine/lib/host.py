@@ -125,13 +125,13 @@ class Host:
     # --- read/write with sudo awareness ---
     def _read(self, path: str, sudo: bool = False) -> str:
         if sudo:
-            cp = self.sys.run(["sudo", "cat", path], check=True, capture=True)
+            cp = self.sys.sudo(["cat", path], check=True, capture=True)
             return cp.stdout or ""
         with open(path, encoding="utf-8") as f:
             return f.read()
 
     def backup(self, path: str, sudo: bool = False) -> Optional[str]:
-        exists = (self.sys.ok(["sudo", "test", "-f", path]) if sudo
+        exists = (self.sys.sudo(["test", "-f", path], check=False).returncode == 0 if sudo
                   else os.path.isfile(path))
         if not exists:
             return None
@@ -154,7 +154,7 @@ class Host:
                      anchor: Optional[str] = None,
                      old_pairs: Sequence[Tuple[str, str]] = (),
                      dry_run: bool = False, sudo: bool = True) -> bool:
-        exists = (self.sys.ok(["sudo", "test", "-f", target]) if sudo
+        exists = (self.sys.sudo(["test", "-f", target], check=False).returncode == 0 if sudo
                   else os.path.isfile(target))
         if not exists:
             self.log.error(f"Target file does not exist: {target}")

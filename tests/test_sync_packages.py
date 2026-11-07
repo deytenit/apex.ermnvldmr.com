@@ -6,7 +6,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from actions.sync import packages
+from importlib import import_module
+
+packages = import_module("actions.util.check-updates")
 
 
 def digest(char):

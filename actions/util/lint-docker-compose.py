@@ -1,4 +1,4 @@
-# actions/utils/lint-docker-compose.py
+# actions/util/lint-docker-compose.py
 """Run dclint through Docker and validate anchor IPs:
 every ipv4_address in compositions/*/docker-compose.yml must be unique and inside the
 node's /24."""
@@ -32,7 +32,7 @@ def run(ctx, args):
         if k in os.environ:
             env_args.extend(["-e", f"{k}={os.environ[k]}"])
     # "-e commons": never --fix inside the pinned submodule — a dirtied commons makes
-    # sync/repository abort the nightly capture-up.
+    # repository/sync abort the nightly capture-up.
     r = s.run(["docker", "run", "--rm", "--network", "host", *env_args, "-v", f"{repo}:/workdir", "-w", "/workdir", "node:lts-alpine",
                "npx", "--yes", "dclint", "-e", "@tier1", "-e", "@tier2", "-e", "@tier3", "-e", ".env",
                "-e", "commons", "--disable-rule", "no-build-and-image", "-r", "--fix", *targets], check=False)

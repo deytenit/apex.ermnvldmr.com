@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
-from actions.sync import repository
+from actions.repository import sync as repository
 from engine.lib.sys import Sys
 
 

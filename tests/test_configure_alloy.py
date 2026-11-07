@@ -9,7 +9,7 @@ from unittest.mock import Mock
 from engine import overlay
 
 ROOT = Path(__file__).resolve().parents[1]
-alloy = overlay.load_module(str(ROOT / 'actions/configure/alloy.py'), 'test_alloy_action')
+alloy = overlay.load_module(str(ROOT / 'actions/config/alloy.py'), 'test_alloy_action')
 
 
 class NativeAlloy(unittest.TestCase):

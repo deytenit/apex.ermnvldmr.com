@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from actions import compose
+from actions.composition import run as compose
 from engine.descriptor import build_parser
 
 
@@ -25,7 +25,7 @@ class TestCompose(unittest.TestCase):
         self.ctx.vars.return_value = {'APEX_NODE_HOST': 'test-host', 'OTHER': 'ignored'}
 
     def run_compose(self, *argv):
-        args = build_parser(compose.METADATA, 'apex compose').parse_args(argv)
+        args = build_parser(compose.METADATA, 'apex composition/run').parse_args(argv)
         compose.run(self.ctx, args)
 
     def visited(self):

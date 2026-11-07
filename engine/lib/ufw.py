@@ -67,10 +67,10 @@ class Ufw:
             self.log.warn("Neither docker nor host ufw rules directory found; nothing to apply.")
             return
         if not self.sys.ok(["sudo", "ufw", "--version"]):
-            self.log.error("ufw not installed/working via sudo. Run configure/base first.")
+            self.log.error("ufw not installed/working via sudo. Run config/packages first.")
             raise SystemExit(1)
         if not (os.path.isfile(UFW_DOCKER_BIN) and os.access(UFW_DOCKER_BIN, os.X_OK)):
-            self.log.error(f"ufw-docker not found at {UFW_DOCKER_BIN}. Run configure/base first.")
+            self.log.error(f"ufw-docker not found at {UFW_DOCKER_BIN}. Run config/ufw-docker first.")
             raise SystemExit(1)
 
         if config_dir:

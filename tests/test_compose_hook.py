@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 from engine.lib.sys import Sys
 
-spec = importlib.util.spec_from_file_location('compose_lint', Path(__file__).resolve().parents[1] / 'actions/utils/lint-docker-compose.py')
+spec = importlib.util.spec_from_file_location('compose_lint', Path(__file__).resolve().parents[1] / 'actions/util/lint-docker-compose.py')
 lint = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lint)
 

@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from engine.lib.host import Host, apply_block
+from engine.lib.sys import Sys
 
 
 def _check_backup_chmod(chmod, expected_group):
@@ -122,6 +123,15 @@ class TestHostWrites(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
         self.assertEqual(path.read_text(), "new")
 
+    def test_root_can_perform_privileged_file_operations_before_sudo_is_installed(self):
+        path = self.root / "bootstrap"
+        path.write_text("first")
+        host = Host(self.log, Sys(self.log))
+        with patch("os.geteuid", return_value=0), patch("shutil.which", return_value=None):
+            host.write_file(str(path), "second", sudo=True)
+            self.assertEqual(host._read(str(path), sudo=True), "second")
+        self.assertEqual(next(self.root.glob("bootstrap.*.bak")).read_text(), "first")
+
     def test_backup_sets_owner_before_exposing_group_readable_content(self):
         path = self.root / "group-secret"
         path.write_text("synthetic group-only secret")
@@ -137,6 +147,8 @@ class TestHostWrites(unittest.TestCase):
         os.utime(path, (1600000000, 1600000000))
 
         def local_sudo(command, **kwargs):
+            if command[:2] == ["test", "-f"]:
+                return subprocess.run(command, **kwargs)
             self.assertEqual(command[:3], ["python3", "-I", "-c"])
             probe = ("import os\n" + inspect.getsource(_check_backup_chmod) +
                      f"\nos.chmod = _check_backup_chmod(os.chmod, {group})\n")
@@ -145,7 +157,6 @@ class TestHostWrites(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return result
 
-        self.host.sys.ok.return_value = True
         self.host.sys.sudo.side_effect = local_sudo
         for sudo in (False, True):
             with self.subTest(sudo=sudo):

@@ -1,6 +1,7 @@
 # engine/lib/sys.py
 """ctx.sys — command execution + systemd service management (port of root_sys.sh)."""
 from __future__ import annotations
+import os
 import shutil
 import subprocess
 import time
@@ -21,6 +22,8 @@ class Sys:
                               stderr=subprocess.PIPE if capture else None)
 
     def sudo(self, cmd: Sequence[str], **kw) -> subprocess.CompletedProcess:
+        if os.geteuid() == 0 and shutil.which("sudo") is None:
+            return self.run(cmd, **kw)
         return self.run(["sudo", *cmd], **kw)
 
     def ok(self, cmd: Sequence[str], **kw) -> bool:

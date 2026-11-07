@@ -1,5 +1,5 @@
-# actions/configure/crowdsec.py
-"""Port of configure/crowdsec — install, deploy /etc/crowdsec, collections, bouncer."""
+# actions/config/crowdsec.py
+"""Port of config/crowdsec — install, deploy /etc/crowdsec, collections, bouncer."""
 import os
 from engine.descriptor import Meta, Flag
 

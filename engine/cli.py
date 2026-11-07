@@ -28,7 +28,7 @@ def _resolve_layout():
 
 
 def _print_list(commons_actions, prop_actions):
-    print("Usage: apex <group>/<action> [args...]\n\nAvailable actions:")
+    print("Usage: apex <entity>/<action> [args...]\n\nAvailable actions:")
     tag = {"commons": "", "local": "  (local)", "override": "  (local override)"}
     for i in overlay.discover(commons_actions, prop_actions):
         mark = f"  [DISABLED: {i.disabled}]" if i.disabled else ""
@@ -44,6 +44,8 @@ def main(argv) -> int:
         return 0
 
     name, rest = argv[0], argv[1:]
+    if name == "compose":
+        name = "composition/run"
     r = overlay.resolve(name, commons_actions, prop_actions)
     if r is None:
         sys.stderr.write(f"[global] [core] [ERROR] Unknown action: {name}\n")

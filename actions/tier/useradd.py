@@ -1,5 +1,5 @@
-# actions/tiers/useradd.py
-"""Port of tiers/useradd — one noroot system user per composition project; inject the
+# actions/tier/useradd.py
+"""Port of tier/useradd — one noroot system user per composition project; inject the
 APEX_UID/APEX_GID/APEX_SHARED_GID block into each project .env."""
 import os, re
 from engine.descriptor import Meta
@@ -36,7 +36,7 @@ def run(ctx, args):
             continue
         # opt-out: a project marked .apex-root-owned runs as root and keeps its tier
         # data root-owned (e.g. seafile-mc, whose entrypoint refuses non-root-owned
-        # data). Skip the noroot user + .env UID injection; tiers/chown forces root.
+        # data). Skip the noroot user + .env UID injection; tier/chown forces root.
         if os.path.isfile(os.path.join(full, ".apex-root-owned")):
             log.info(f"{proj}: .apex-root-owned — runs as root; skipping noroot user")
             continue

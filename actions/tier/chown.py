@@ -1,5 +1,5 @@
-# actions/tiers/chown.py
-"""Port of tiers/chown — ownership: {tier}/{proj} -> uid:gid; {tier}/shared/{proj} ->
+# actions/tier/chown.py
+"""Port of tier/chown — ownership: {tier}/{proj} -> uid:gid; {tier}/shared/{proj} ->
 uid:shared_gid (+sticky); base/node-infra -> root:root. Reads APEX_UID/GID from each .env."""
 import os
 from engine.descriptor import Meta, Arg
@@ -31,7 +31,7 @@ def run(ctx, args):
 
     cp = s.run(["getent", "group", SHARED_GROUP], check=False, capture=True)
     if cp.returncode != 0:
-        log.error(f"Shared group '{SHARED_GROUP}' not found. Run tiers/useradd first."); raise SystemExit(1)
+        log.error(f"Shared group '{SHARED_GROUP}' not found. Run tier/useradd first."); raise SystemExit(1)
 
     log.info("Ensuring base structures owned by root...")
     for tp in tiers:
@@ -62,7 +62,7 @@ def run(ctx, args):
         gid = _env_val(env_path, "APEX_GID")
         sgid = _env_val(env_path, "APEX_SHARED_GID")
         if not (uid and gid and sgid):
-            log.warn(f"Incomplete APEX_UID/GID/SHARED_GID for {proj}. Run tiers/useradd first. Skipping.")
+            log.warn(f"Incomplete APEX_UID/GID/SHARED_GID for {proj}. Run tier/useradd first. Skipping.")
             continue
         log.info(f"Applying permissions for {proj} (UID={uid} GID={gid} SHARED_GID={sgid})")
         for tp in tiers:

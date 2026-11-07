@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from actions import env
+from actions.config import env
 from engine.descriptor import build_parser
 from engine.lib.host import Host
 
@@ -31,7 +31,7 @@ class TestEnv(unittest.TestCase):
         self.ctx.host = Host(self.ctx.log, self.ctx.sys)
 
     def run_env(self, *argv):
-        args = build_parser(env.METADATA, 'apex env').parse_args(argv)
+        args = build_parser(env.METADATA, 'apex config/env').parse_args(argv)
         with contextlib.redirect_stdout(io.StringIO()) as out:
             env.run(self.ctx, args)
         return out.getvalue()

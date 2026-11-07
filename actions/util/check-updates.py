@@ -1,4 +1,4 @@
-# actions/sync/packages.py
+# actions/util/check-updates.py
 """Check pending APT and running-image updates without pulling images."""
 import json
 import os
