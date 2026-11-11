@@ -70,6 +70,10 @@ def run(ctx, args):
             sdir = os.path.join(tp, "shared", proj)
             if os.path.isdir(pdir):
                 s.sudo(["chown", "-R", f"{uid}:{gid}", pdir]); log.success(f"  Owned {pdir}")
+                env_file = os.path.join(pdir, ".env")
+                if os.path.isfile(env_file):
+                    s.sudo(["chown", f"adam:{gid}", env_file])
+                    s.sudo(["chmod", "0640", env_file])
             if os.path.isdir(sdir):
                 s.sudo(["chown", "-R", f"{uid}:{sgid}", sdir])
                 s.sudo(["chmod", "+t", sdir]); log.success(f"  Owned {sdir} (sticky)")
