@@ -36,9 +36,12 @@ def run(ctx, args):
         if actual != expected:
             raise RuntimeError("Commons checkout differs from the committed pin; update the submodule before retrying.")
         git("add", "-A")
+        head_before = git("rev-parse", "HEAD", capture=True).stdout.strip()
+        committed = False
         if git("diff", "--cached", "--quiet", check=False).returncode != 0:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             git("commit", "-m", f"[{node}] Auto-commit: {ts}")
+            committed = True
         else:
             log.info("No changes to commit.")
         git("fetch", "origin", "main")
@@ -46,10 +49,13 @@ def run(ctx, args):
             git("rebase", "--abort", check=False)
             raise RuntimeError("Rebase conflict; local commits retained for manual resolution.")
         git("submodule", "update", "--init", "--recursive")
+        head_after = git("rev-parse", "HEAD", capture=True).stdout.strip()
+        advanced = (head_before != head_after)
         git("push", "origin", "HEAD:refs/heads/main")
         log.success("Synchronized main.")
-        if url and not ctx.notify.success(TITLE, url, "Sync to main completed."):
-            raise SystemExit(1)
+        if url and advanced:
+            if not ctx.notify.success(TITLE, url, "Sync to main completed."):
+                raise SystemExit(1)
     except SystemExit:
         raise
     except Exception as e:
