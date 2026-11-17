@@ -55,9 +55,8 @@ def run(ctx, args):
     env = dict(os.environ, COMPOSE_PROFILES="manual")
     env.update({k: v for k, v in ctx.vars().items() if k.startswith("APEX_")})  # tier paths, identity
     envfiles = []
-    for ef in (".env", "apex.env"):          # secrets (.env) + committed scalars (apex.env)
-        if os.path.isfile(os.path.join(core, ef)):
-            envfiles += ["--env-file", ef]
+    if os.path.isfile(os.path.join(core, ".env")):
+        envfiles += ["--env-file", ".env"]
 
     def restic(*cmd, check=True, capture=False):
         return ctx.sys.run(["docker", "compose", *envfiles, "--profile", "manual",

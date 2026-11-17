@@ -35,8 +35,8 @@ def _read_optional(path):
         return ""
 
 
-def _sync_body(existing, public, generated):
-    if any(marker in public or marker in generated for marker in (_START, _END)):
+def _sync_body(existing, generated):
+    if any(marker in generated for marker in (_START, _END)):
         raise ValueError("Managed environment marker collides with source content.")
     lines = existing.splitlines(keepends=True)
     markers = [(index, line.rstrip("\r\n")) for index, line in enumerate(lines)
@@ -48,9 +48,7 @@ def _sync_body(existing, public, generated):
         existing = "".join(lines[:start] + lines[end + 1:])
     # Keep user bytes in order, but place managed values last to preserve precedence.
     separator = "" if not existing or existing.endswith("\n") else "\n"
-    public_separator = "" if not public or public.endswith("\n") else "\n"
-    return (existing + separator + _START + "\n" + public + public_separator
-            + generated + _END + "\n")
+    return existing + separator + _START + "\n" + generated + _END + "\n"
 
 
 def run(ctx, args):
@@ -66,8 +64,7 @@ def run(ctx, args):
         core = os.path.join(ctx.paths.compositions, "apex")
         target = os.path.join(core, ".env")
         try:
-            generated = _sync_body(_read_optional(target),
-                                   _read_optional(os.path.join(core, "apex.env")), generated)
+            generated = _sync_body(_read_optional(target), generated)
         except ValueError as error:
             ctx.log.error(str(error))
             raise SystemExit(65) from error

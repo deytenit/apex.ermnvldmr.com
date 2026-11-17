@@ -49,7 +49,7 @@ services:
     environment:
       <<: *shared-environment
       APEX_NODE_HOST: "${APEX_NODE_HOST?error}" # node + instance metric/log labels
-      # push targets + machine auth (per-node scalars in apex.env / secret .env)
+      # push targets + machine auth (per-node scalars in composition .env)
       APEX_LOKI_PUSH_URL: "${APEX_LOKI_PUSH_URL?error}"
       APEX_PROM_PUSH_URL: "${APEX_PROM_PUSH_URL?error}"
       APEX_OBS_BASIC_AUTH_USER: "${APEX_OBS_BASIC_AUTH_USER?error}"
@@ -103,7 +103,7 @@ services:
       AWS_ACCESS_KEY_ID: "${APEX_RESTIC_AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${APEX_RESTIC_AWS_SECRET_ACCESS_KEY:-}"
       # S3 backend region + endpoint. Defaults suit AWS S3 (us-east-1, no custom
-      # endpoint); set APEX_RESTIC_AWS_REGION / APEX_RESTIC_AWS_ENDPOINT (node apex.env)
+      # endpoint); set APEX_RESTIC_AWS_REGION / APEX_RESTIC_AWS_ENDPOINT (in composition .env)
       # for any other S3-compatible store (Yandex, Backblaze B2, MinIO, …).
       AWS_REGION: "${APEX_RESTIC_AWS_REGION:-us-east-1}"
       AWS_ENDPOINT_URL: "${APEX_RESTIC_AWS_ENDPOINT:-}"

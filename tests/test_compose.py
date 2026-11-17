@@ -96,12 +96,10 @@ class TestCompose(unittest.TestCase):
                          ['docker', 'compose', 'exec', '--', 'probe', '--dry-run', '-p', 'sso'])
 
     def test_env_files_layer_before_action(self):
-        for filename in ('.env', 'apex.env'):
-            (self.comp_dir / 'apex' / filename).write_text('PORT=1234\n')
+        (self.comp_dir / 'apex' / '.env').write_text('PORT=1234\n')
         self.run_compose('-p', 'apex', 'config')
         self.assertEqual(self.ctx.sys.run.call_args.args[0],
-                         ['docker', 'compose', '--env-file', '.env', '--env-file',
-                          'apex.env', 'config'])
+                         ['docker', 'compose', '--env-file', '.env', 'config'])
 
     def test_socket_survives_restart_up_and_dry_run(self):
         shm = Path(self.tmpdir.name) / 'apex' / 'xray' / 'shm'

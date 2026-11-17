@@ -113,16 +113,15 @@ docker compose config --quiet
 docker compose restart traefik
 ```
 
-Sync preserves existing `.env` credentials and UID/GID entries, including tier
-symlinks. It updates a managed block containing `apex.env` settings (including
-profiles) followed by synthesized node/path values, and writes with mode `0600`.
-Resync after changing `apex.env`, node identity, or tier paths. Shell environment
+Sync preserves existing `.env` credentials and UID/GID entries. It updates a managed
+block containing synthesized node/path values (`# BEGIN APEX MANAGED ENV`), and writes with mode `0600`.
+Resync after changing node identity or tier paths. Shell environment
 values still take precedence in Docker Compose. Do not edit the generated block.
 
 `eval "$(apex config/env)"` exports synthesized APEX values to the current shell;
 `apex config/env --dotenv` prints dotenv syntax, and `apex config/env --write generated.env`
 writes those values to a separate file. These three modes do not merge the
-composition's secrets or `apex.env`; use `--sync` for the complete core bridge.
+composition's secrets; use `--sync` for the complete core bridge.
 Choose one output mode per invocation.
 
 ### Preparing an existing host

@@ -134,7 +134,7 @@ class TestSyncPackages(unittest.TestCase):
     def build_service(self, image='alpine:3.21'):
         core = Path(self.tmp.name) / 'apex'
         core.mkdir()
-        for filename in ('docker-compose.yml', '.env', 'apex.env'):
+        for filename in ('docker-compose.yml', '.env'):
             (core / filename).touch()
         self.commands.compose = {'name': 'apex', 'services': {
             'custom': {'build': {'context': '.'}, 'environment': {'TOKEN': 'private-test-value'}}}}
@@ -149,7 +149,7 @@ class TestSyncPackages(unittest.TestCase):
         self.assertIn('1 local/untracked', self.report())
         self.assertFalse(any('imagetools' in c for c in self.commands.calls))
         self.assertIn(['timeout', '--signal=TERM', '--kill-after=5s', '30s', 'docker',
-                       'compose', '--env-file', '.env', '--env-file', 'apex.env',
+                       'compose', '--env-file', '.env',
                        'config', '--format', 'json'], self.commands.calls)
         self.assertEqual(self.commands.compose_options[0]['env']['APEX_NODE_HOST'], 'test-node')
         self.assertNotIn('private-test-value', str(self.ctx.log.mock_calls))

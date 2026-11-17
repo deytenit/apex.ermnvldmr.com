@@ -78,9 +78,8 @@ def run(ctx, args):
     def run_one(dirpath):
         name = os.path.basename(dirpath)
         base = ["docker", "compose"]
-        for ef in (".env", "apex.env"):
-            if os.path.isfile(os.path.join(dirpath, ef)):
-                base += ["--env-file", ef]
+        if os.path.isfile(os.path.join(dirpath, ".env")):
+            base += ["--env-file", ".env"]
         if action == "up":
             up_flags = [] if any(flag in extra for flag in ("-d", "--detach")) else ["-d"]
             cmd = base + ["up"] + up_flags + extra

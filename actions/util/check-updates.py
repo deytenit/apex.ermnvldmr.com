@@ -100,9 +100,8 @@ def _compose_builds(ctx):
         if name.startswith((".", "@")) or not os.path.isfile(os.path.join(directory, "docker-compose.yml")):
             continue
         command = ["docker", "compose"]
-        for filename in (".env", "apex.env"):
-            if os.path.isfile(os.path.join(directory, filename)):
-                command += ["--env-file", filename]
+        if os.path.isfile(os.path.join(directory, ".env")):
+            command += ["--env-file", ".env"]
         # Resolved Compose includes secrets: capture privately and never log it.
         result = ctx.sys.run(["timeout", "--signal=TERM", "--kill-after=5s", "30s",
                               *command, "config", "--format", "json"],

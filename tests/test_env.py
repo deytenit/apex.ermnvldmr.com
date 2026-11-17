@@ -60,11 +60,10 @@ class TestEnv(unittest.TestCase):
         target = self.core / '.env'
         target.write_bytes(original)
         target.chmod(0o600)
-        (self.core / 'apex.env').write_bytes(b'COMPOSE_PROFILES=core\r\nPORT=1234\r\n')
         self.run_env('--sync')
         first = target.read_bytes()
         self.assertTrue(first.startswith(original + b'\n'))
-        self.assertIn(b'COMPOSE_PROFILES=core\r\nPORT=1234\r\n', first)
+        self.assertIn(b'APEX_NODE_HOST=', first)
         self.run_env('--sync')
         self.assertEqual(first, target.read_bytes())
         self.ctx.vars.return_value['APEX_NODE_HOST'] = 'new-host'
@@ -121,12 +120,6 @@ class TestEnv(unittest.TestCase):
                 self.assertEqual(target.read_text(), content)
 
     def test_source_marker_collision_fails_without_writing(self):
-        (self.core / 'apex.env').write_text('# BEGIN APEX MANAGED ENV\n')
-        with self.assertRaises(SystemExit) as error:
-            self.run_env('--sync')
-        self.assertEqual(error.exception.code, 65)
-        self.assertFalse((self.core / '.env').exists())
-        (self.core / 'apex.env').unlink()
         self.ctx.vars.return_value['APEX_NODE_HOST'] = '# END APEX MANAGED ENV'
         with self.assertRaises(SystemExit) as error:
             self.run_env('--sync')
@@ -146,10 +139,9 @@ class TestEnv(unittest.TestCase):
             'APEX_NODE_HOST': 'synthesized',
         }
         self.ctx.vars.return_value = values
-        (self.core / '.env').write_text('UID=1000\nGID=1001\nPORT=1\nAPEX_NODE_HOST=old\n'
-                                       "TOKEN='literal$token#hash'\n")
-        (self.core / 'apex.env').write_text('PORT=2\nAPEX_NODE_HOST=public\n'
-                                           'COMPOSE_PROFILES=chosen\n')
+        (self.core / '.env').write_text('UID=1000\nGID=1001\nPORT=2\nAPEX_NODE_HOST=old\n'
+                                       "TOKEN='literal$token#hash'\n"
+                                       'COMPOSE_PROFILES=chosen\n')
         keys = [*values, 'UID', 'GID', 'PORT', 'TOKEN']
         (self.core / 'docker-compose.yml').write_text(
             'services:\n  probe:\n    image: busybox\n    profiles: [chosen]\n'
@@ -172,7 +164,7 @@ class TestEnv(unittest.TestCase):
         self.assertIn('# later user addition\nPORT=999\n', (self.core / '.env').read_text())
         result = subprocess.run([binary, 'config', '--format', 'json'], cwd=self.core,
                                 capture_output=True, check=True, timeout=30, env={})
-        self.assertEqual(json.loads(result.stdout)['services']['probe']['environment']['PORT'], '2')
+        self.assertEqual(json.loads(result.stdout)['services']['probe']['environment']['PORT'], '999')
         result = subprocess.run([binary, 'config', '--services'], cwd=self.core,
                                 capture_output=True, check=True, timeout=30, env={})
         self.assertEqual(result.stdout.strip(), b'probe')
