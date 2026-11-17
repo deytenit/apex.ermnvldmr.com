@@ -10,14 +10,25 @@ METADATA = Meta(summary="Apply tier ownership/permissions from each project's AP
                       Arg("tier3_path", "Path to tier 3", required=False)])
 SHARED_GROUP = "noroot-shared"
 
-def _env_val(path, key):
+def _env_val(ctx, path, key):
     if not os.path.exists(path):
         return ""
-    with open(os.path.realpath(path), encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
+    try:
+        with open(os.path.realpath(path), encoding="utf-8") as f:
+            lines = f.readlines()
+    except PermissionError:
+        cp = ctx.sys.sudo(["cat", os.path.realpath(path)], capture=True, check=False)
+        if cp.returncode == 0:
+            lines = (cp.stdout or "").splitlines()
+        else:
+            return ""
+    except Exception:
+        return ""
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith(key + "="):
+            return line.split("=", 1)[1].strip()
     return ""
 
 def run(ctx, args):
@@ -58,9 +69,9 @@ def run(ctx, args):
                         s.sudo(["chown", "-R", "root:root", d]); log.success(f"  Owned {d} (root)")
             continue
         env_path = os.path.join(full, ".env")
-        uid = _env_val(env_path, "APEX_UID")
-        gid = _env_val(env_path, "APEX_GID")
-        sgid = _env_val(env_path, "APEX_SHARED_GID")
+        uid = _env_val(ctx, env_path, "APEX_UID")
+        gid = _env_val(ctx, env_path, "APEX_GID")
+        sgid = _env_val(ctx, env_path, "APEX_SHARED_GID")
         if not (uid and gid and sgid):
             log.warn(f"Incomplete APEX_UID/GID/SHARED_GID for {proj}. Run tier/useradd first. Skipping.")
             continue
