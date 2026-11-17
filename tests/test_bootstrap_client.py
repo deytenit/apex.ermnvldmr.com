@@ -1,4 +1,4 @@
-import json
+import base64
 import os
 import shutil
 import subprocess
@@ -13,10 +13,9 @@ class BootstrapClientTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        source = Path(__file__).resolve().parents[1] / "scripts/bootstrap-node"
-        self.launcher = self.root / "bootstrap-node"
+        source = Path(__file__).resolve().parents[1] / "scripts/bootstrap"
+        self.launcher = self.root / "bootstrap"
         shutil.copy(source, self.launcher)
-        (self.root / "bootstrap-node-remote.py").write_text("pass\n")
         for name in ("operator", "deploy"):
             subprocess.run(["ssh-keygen", "-qt", "ed25519", "-N", "", "-f", str(self.root / name)],
                            check=True)
@@ -38,12 +37,18 @@ class BootstrapClientTest(unittest.TestCase):
     def test_custom_git_port_and_secrets_delivered_via_stdin(self):
         run = self.launch()
         self.assertEqual(run.returncode, 0, run.stderr)
-        payload = json.loads((self.root / "payload").read_text())
-        self.assertEqual(payload["node_name"], "example")
+        lines = (self.root / "payload").read_text().splitlines()
+        self.assertEqual(len(lines), 6)
+        self.assertEqual(lines[0], "example")
+        self.assertEqual(lines[1], "ssh://git@git.example:2222/fleet/example.git")
+        self.assertEqual(lines[2], "git.example")
+        self.assertEqual(base64.b64decode(lines[3]).decode(), self.public.strip())
         secret = (self.root / "deploy").read_text()
-        self.assertEqual(payload["deploy_key"], secret)
-        self.assertNotIn(secret.strip().splitlines()[1], (self.root / "args").read_text()
-                         + run.stdout + run.stderr)
+        self.assertEqual(base64.b64decode(lines[4]).decode(), secret.rstrip() + "\n")
+        args_and_output = (self.root / "args").read_text() + run.stdout + run.stderr
+        self.assertNotIn(secret.strip().splitlines()[1], args_and_output)
+        self.assertNotIn("groupadd", args_and_output)
+        self.assertNotIn("apt-get", args_and_output)
 
     def test_git_host_pin_for_default_port_rejected(self):
         (self.root / "known").write_text("git.example " + self.public)

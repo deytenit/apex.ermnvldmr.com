@@ -2,13 +2,91 @@
 """Bootstrap a fleet node through a trusted OpenSSH connection."""
 
 import argparse
-import json
+import base64
 import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
+
+REMOTE_SCRIPT = r"""set -eu
+umask 077
+
+if ! command -v git >/dev/null 2>&1 || ! command -v ssh >/dev/null 2>&1; then
+    echo "git and openssh-client are required on the target host" >&2
+    exit 1
+fi
+
+IFS= read -r node_name
+IFS= read -r repo_url
+IFS= read -r git_host
+IFS= read -r b64_operator
+IFS= read -r b64_deploy
+IFS= read -r b64_hosts
+
+if ! id -u adam >/dev/null 2>&1; then
+    useradd --create-home --user-group --shell /bin/bash adam
+fi
+uid="$(id -u adam)"
+gid="$(id -g adam)"
+[ "$uid" -ge 1000 ] || { echo "Existing adam account must have uid >= 1000" >&2; exit 1; }
+home="/home/adam"
+[ -d "$home" ] || { echo "Missing /home/adam" >&2; exit 1; }
+
+ssh_dir="$home/.ssh"
+mkdir -p "$ssh_dir"
+chmod 700 "$ssh_dir"
+chown "$uid:$gid" "$ssh_dir"
+
+operator_key="$(printf '%s' "$b64_operator" | base64 -d)"
+auth_keys="$ssh_dir/authorized_keys"
+touch "$auth_keys"
+if ! grep -Fqx "$operator_key" "$auth_keys"; then
+    printf '%s\n' "$operator_key" >> "$auth_keys"
+fi
+chmod 600 "$auth_keys"
+chown "$uid:$gid" "$auth_keys"
+
+prefix="$ssh_dir/apex-$node_name"
+printf '%s' "$b64_deploy" | base64 -d > "$prefix.key"
+printf '%s' "$b64_hosts" | base64 -d > "$prefix.hosts"
+cat > "$prefix.sshconf" <<EOF
+Host $git_host
+    IdentitiesOnly yes
+    IdentityFile $prefix.key
+    UserKnownHostsFile $prefix.hosts
+    GlobalKnownHostsFile /dev/null
+Host *
+    StrictHostKeyChecking yes
+    BatchMode yes
+EOF
+printf '[core]\n\tsshCommand = ssh -F %s.sshconf\n' "$prefix" > "$prefix.gitconf"
+chmod 600 "$prefix.key" "$prefix.hosts" "$prefix.sshconf" "$prefix.gitconf"
+chown "$uid:$gid" "$prefix.key" "$prefix.hosts" "$prefix.sshconf" "$prefix.gitconf"
+
+gitconfig="$home/.gitconfig"
+touch "$gitconfig"
+if ! grep -Fq "gitdir:/srv/$node_name/.git" "$gitconfig"; then
+    printf '\n[includeIf "gitdir:/srv/%s/.git"]\n\tpath = %s.gitconf\n[includeIf "gitdir:/srv/%s/.git/"]\n\tpath = %s.gitconf\n' \
+        "$node_name" "$prefix" "$node_name" "$prefix" >> "$gitconfig"
+fi
+chmod 600 "$gitconfig"
+chown "$uid:$gid" "$gitconfig"
+
+mkdir -p /srv
+chmod 755 /srv
+dest="/srv/$node_name"
+if [ -e "$dest" ]; then
+    existing_url="$(runuser -u adam -- git -C "$dest" config --get remote.origin.url || true)"
+    [ "$existing_url" = "$repo_url" ] || { echo "Existing $dest does not match $repo_url" >&2; exit 1; }
+else
+    mkdir -p "$dest"
+    chown "$uid:$gid" "$dest"
+    runuser -u adam -- env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -F $prefix.sshconf" \
+        git clone --recurse-submodules -- "$repo_url" "$dest"
+fi
+"""
 
 
 def repository(url):
@@ -27,15 +105,20 @@ def repository(url):
         host, port = host.strip("[]"), None
     if not host or not re.fullmatch(r"[a-zA-Z0-9:][a-zA-Z0-9.:-]*", host) or not path:
         raise ValueError("invalid Git host or repository path")
-    return f"[{host}]:{port}" if port not in (None, 22) else host, Path(path).name.removesuffix(".git")
+    endpoint = f"[{host}]:{port}" if port not in (None, 22) else host
+    return host, endpoint, Path(path).name.removesuffix(".git")
 
 
 def keygen(args, data=None):
     return subprocess.run(["ssh-keygen", *args], input=data or b"", capture_output=True)
 
 
+def b64(text):
+    return base64.b64encode(text.encode()).decode("ascii")
+
+
 def bootstrap(args):
-    endpoint, basename = repository(args.repo)
+    host, endpoint, basename = repository(args.repo)
     name = args.node_name if args.node_name is not None else basename
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", name):
         raise ValueError("invalid node name")
@@ -56,18 +139,15 @@ def bootstrap(args):
         for pin in pins
     ):
         raise ValueError(f"no usable known_hosts pin for {endpoint}")
-    payload = json.dumps(dict(operator_key=operator, deploy_key=args.deploy_key.read_text(),
-                              known_hosts="\n".join(pins) + "\n", repo_url=args.repo, node_name=name))
-    helper = Path(__file__).resolve().with_name("bootstrap-node-remote.py").read_text()
-    # Package management must never consume the credential payload on standard input.
-    remote = """set -e
-if [ "$(id -u)" = 0 ]; then set --; else set -- sudo -n --; fi
-if ! command -v python3 >/dev/null; then
-    test -f /etc/debian_version
-    "$@" apt-get -o DPkg::Lock::Timeout=60 update </dev/null
-    "$@" env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y python3 </dev/null
-fi
-exec "$@" python3 -I -c """ + shlex.quote(helper)
+    payload = "\n".join([
+        name,
+        args.repo,
+        host,
+        b64(operator),
+        b64(args.deploy_key.read_text().rstrip() + "\n"),
+        b64("\n".join(pins) + "\n"),
+    ]) + "\n"
+    remote = 'if [ "$(id -u)" -eq 0 ]; then exec sh -c ' + shlex.quote(REMOTE_SCRIPT) + '; else exec sudo -n sh -c ' + shlex.quote(REMOTE_SCRIPT) + '; fi'
     result = subprocess.run(["ssh", "-T", "-a", "-S", "none", "-o", "StrictHostKeyChecking=yes",
                            "-o", "ClearAllForwardings=yes", "--", args.target, remote],
                           input=payload.encode())
@@ -88,7 +168,7 @@ def main():
     try:
         return bootstrap(args)
     except (OSError, ValueError) as exc:
-        parser.exit(1, f"bootstrap-node: {exc}\n")
+        parser.exit(1, f"bootstrap: {exc}\n")
 
 
 if __name__ == "__main__":

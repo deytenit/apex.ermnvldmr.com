@@ -1,12 +1,39 @@
 """Commit node configuration and synchronize main directly with its remote."""
 import os
 from datetime import datetime
+from pathlib import Path
+import shutil
 from engine.descriptor import Meta, Arg
 from engine.identity import read_env
 
 METADATA = Meta(summary="Commit node changes, rebase onto origin/main, and push main.",
                 args=[Arg("telegram_bot_url", "Optional notification URL", required=False)])
 TITLE = "Repository Sync"
+
+
+def _encrypt_secrets(ctx, repo, compositions):
+    sops_config = os.path.join(repo, ".sops.yaml")
+    if not os.path.isfile(sops_config):
+        return
+    comp_root = Path(compositions)
+    if not comp_root.is_dir():
+        return
+    for plain in sorted(comp_root.glob("*/.env")):
+        enc = plain.with_name(".enc.env")
+        if enc.exists() and plain.stat().st_mtime <= enc.stat().st_mtime:
+            continue
+        if shutil.which("sops") is None:
+            raise RuntimeError("sops is required to encrypt modified composition secrets.")
+        rel_enc = str(enc.relative_to(repo))
+        result = ctx.sys.run(
+            ["sops", "-e", "--filename-override", rel_enc,
+             "--input-type", "dotenv", "--output-type", "dotenv", str(plain)],
+            cwd=repo, capture=True,
+        )
+        tmp = enc.with_name("..enc.env.tmp")
+        tmp.write_text(result.stdout)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, enc)
 
 
 def run(ctx, args):
@@ -35,6 +62,7 @@ def run(ctx, args):
         actual = ctx.sys.run(["git", "-C", commons, "rev-parse", "HEAD"], capture=True).stdout.strip()
         if actual != expected:
             raise RuntimeError("Commons checkout differs from the committed pin; update the submodule before retrying.")
+        _encrypt_secrets(ctx, repo, ctx.paths.compositions)
         git("add", "-A")
         head_before = git("rev-parse", "HEAD", capture=True).stdout.strip()
         committed = False

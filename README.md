@@ -13,10 +13,10 @@ Local infrastructure operations for independently owned nodes, with a Python sta
 - **Report an Issue**: <https://git.ermnvldmr.com/deytenit/apex.ermnvldmr.com/issues>
 - **License**: [BSD-2-Clause](#copyright--license)
 
-From an APEX checkout on your workstation, connect to the installed Debian or Proxmox VE host as root or as a user with passwordless sudo. The workstation needs Python 3.10 or newer and OpenSSH. The script installs Python 3 through APT if the host lacks it. Verify its SSH host key through a trusted channel and record it in your workstation’s SSH known hosts before connecting.
+From an APEX checkout on your workstation, connect to the installed Debian or Proxmox VE host as root or as a user with passwordless sudo. The workstation needs Python 3.10 or newer and OpenSSH; the target host only needs Git and OpenSSH. Verify its SSH host key through a trusted channel and record it in your workstation’s SSH known hosts before connecting.
 
 ```sh
-scripts/bootstrap-node \
+scripts/bootstrap \
   --target root@node.example.com \
   --repo ssh://git@git.example.com:22222/infrastructure/selfhost.example.com.git \
   --operator-key ~/.ssh/operator.pub \
@@ -24,7 +24,7 @@ scripts/bootstrap-node \
   --known-hosts ~/.ssh/git-known-hosts
 ```
 
-The operator public key grants SSH access to `adam`, who receives passwordless sudo. Use a separate, passphrase-free SSH deploy key for this node. Register its public half as a deploy key on the Git server before running the script. The script installs the private half on the node. The key must have read access to the node repository and any private SSH submodules it needs on that Git server. Grant write access to the node repository only if you use `apex repository/sync` to push changes. Supply verified Git server host keys in OpenSSH known_hosts format, including the port for nonstandard listeners (for example, `[git.example.com]:22222`).
+The script creates the `adam` user, installs the operator public key for SSH access, installs the deploy key and pinned host key for Git, and clones the repository under `/srv`. Packages, `sudo` policy, and `docker` group membership are configured afterwards by `apex config/*` actions. Use a separate, passphrase-free SSH deploy key for this node. Register its public half as a deploy key on the Git server before running the script. The script installs the private half on the node. The key must have read access to the node repository and any private SSH submodules it needs on that Git server. Grant write access to the node repository only if you use `apex repository/sync` to push changes. Supply verified Git server host keys in OpenSSH known_hosts format, including the port for nonstandard listeners (for example, `[git.example.com]:22222`).
 
 The script clones the repository under `/srv` as `adam`. Use `--node-name NAME` to choose the checkout directory under `/srv`. Before changing the SSH policy, log in with the matching operator private key on the original SSH port. Use the same host or SSH alias as the bootstrap target.
 

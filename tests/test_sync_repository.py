@@ -128,6 +128,22 @@ class RepositorySyncTests(unittest.TestCase):
         self.assertEqual(self.git("--git-dir=" + str(self.remote), "show", "main:compositions/service"), "remote")
         self.assertFalse((self.repo / ".git/rebase-merge").exists())
 
+    def test_encrypts_modified_secrets_when_sops_configured(self):
+        (self.repo / ".sops.yaml").write_text("creation_rules:\n  - age: age1test\n")
+        app = self.repo / "compositions/app"
+        app.mkdir()
+        (app / ".env").write_text("SECRET=hello\n")
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        sops = bin_dir / "sops"
+        sops.write_text('#!/bin/sh\necho "SECRET=ENC[AES256_GCM,data:abc]"\n')
+        sops.chmod(0o755)
+        self.env["PATH"] = str(bin_dir) + os.pathsep + self.env["PATH"]
+        with unittest.mock.patch.dict(os.environ, PATH=self.env["PATH"]):
+            self.sync()
+        committed = self.git("--git-dir=" + str(self.remote), "show", "main:compositions/app/.enc.env")
+        self.assertEqual(committed, "SECRET=ENC[AES256_GCM,data:abc]")
+
 
 if __name__ == "__main__":
     unittest.main()

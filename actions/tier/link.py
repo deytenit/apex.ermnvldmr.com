@@ -60,10 +60,4 @@ def run(ctx, args):
             link = os.path.join(full, f"@tier{n}")
             if safe_remove(link, f"@tier{n}"):
                 mklink(os.path.join(base, proj), link, f"@tier{n}")
-        env_link = os.path.join(full, ".env")
-        env_target = os.path.join(tiers[0], proj, ".env")
-        if safe_remove(env_link, ".env"):
-            if not os.path.isfile(env_target):
-                s.sudo(["touch", env_target])
-            mklink(env_target, env_link, ".env")
     log.success("@tier setup completed.")

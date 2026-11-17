@@ -59,6 +59,13 @@ def run(ctx, args):
         parts = pw.stdout.split(":") if pw.returncode == 0 else []
         uid, gid = (parts[2], parts[3]) if len(parts) >= 4 else ("", "")
         env_path = os.path.join(full, ".env")
+        if not os.path.exists(env_path):
+            try:
+                with open(env_path, "w", encoding="utf-8"):
+                    pass
+                os.chmod(env_path, 0o600)
+            except Exception as e:
+                log.warn(f"Could not create empty {env_path}: {e}")
         if uid and gid and shared_gid and os.path.exists(env_path):
             _inject_env(ctx, env_path, uid, gid, shared_gid)
         elif os.path.exists(env_path):
@@ -69,14 +76,17 @@ def run(ctx, args):
 
 def _inject_env(ctx, env_path, uid, gid, shared_gid):
     actual = os.path.realpath(env_path)
-    with open(actual) as f:
+    with open(actual, encoding="utf-8") as f:
         text = f.read()
     block = f"{START}\nAPEX_UID={uid}\nAPEX_GID={gid}\nAPEX_SHARED_GID={shared_gid}\n{END}\n"
     if START in text:
         new = re.sub(re.escape(START) + r".*?" + re.escape(END) + r"\n", block, text, flags=re.S)
     else:
-        new = block + "\n" + text
+        new = block + "\n" + text if text else block
     # backup=False: bash never left copies; a timestamped .bak would pile up a
     # secret-bearing .env duplicate per run next to the bind-mounted project dir.
-    ctx.host.write_file(actual, new, backup=False, sudo=True)
+    try:
+        ctx.host.write_file(actual, new, mode="0600", backup=False, sudo=False)
+    except PermissionError:
+        ctx.host.write_file(actual, new, mode="0600", backup=False, sudo=True)
     ctx.log.success(f"Updated {actual} with APEX_UID/GID/SHARED_GID")

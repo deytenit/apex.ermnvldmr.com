@@ -25,7 +25,8 @@ class ToolingTests(unittest.TestCase):
             environment = dict(os.environ, PATH=str(binaries))
             sources = []
             (root / 'scripts').mkdir()
-            (root / 'scripts/bootstrap-node').write_text('print(1)\n')
+            (root / 'scripts/bootstrap').write_text('print(1)\n')
+            (root / 'scripts/secrets').write_text('print(1)\n')
             for name in ('actions', 'tests', 'scripts'):
                 source = root / name / 'nested' / 'case.py'
                 source.parent.mkdir(parents=True)
