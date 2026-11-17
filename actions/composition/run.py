@@ -91,7 +91,15 @@ def run(ctx, args):
             log.info(f"[DRY-RUN] (cd {shlex.quote(dirpath)} && {shlex.join(cmd)})")
         else:
             log.info(f"{action} {name}...")
-            ctx.sys.run(cmd, cwd=dirpath, env=env, check=True)
+            try:
+                ctx.sys.run(cmd, cwd=dirpath, env=env, check=True)
+            except Exception:
+                if action == "up" and target == "all" and name == "apex":
+                    cp = ctx.sys.run(base + ["config", "--services"], cwd=dirpath, env=env, check=False, capture=True)
+                    if cp.returncode == 0 and not (cp.stdout or "").strip():
+                        log.info("No active services in apex composition; skipping.")
+                        return
+                raise
 
     for d in sequence():
         run_one(d)
