@@ -16,6 +16,7 @@ class SecretsClientTest(unittest.TestCase):
         source = Path(__file__).resolve().parents[1] / "scripts/secrets"
         self.launcher = self.root / "secrets"
         shutil.copy(source, self.launcher)
+        shutil.copytree(Path(__file__).resolve().parents[1] / "scripts/engine", self.root / "engine")
         self.repo = self.root / "node.example.com"
         (self.repo / "compositions/apex").mkdir(parents=True)
         (self.repo / "compositions/apex/.enc.env").write_text("TOKEN=ENC[test]\n")
