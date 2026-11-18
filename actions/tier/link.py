@@ -36,6 +36,8 @@ def run(ctx, args):
         log.success(f"Created {desc} symlink: {link} -> {target}")
 
     log.info("Starting @tier setup...")
+    tier0_root = ctx.paths.root_tier0
+    s.sudo(["mkdir", "-p", tier0_root])
     for t in tiers:
         s.sudo(["mkdir", "-p", t])
     # node-level @tierN -> tier roots
@@ -49,6 +51,13 @@ def run(ctx, args):
         if not os.path.isdir(full) or proj.startswith(".") or proj.startswith("@"):
             continue
         log.info(f"Processing project: {proj}")
+        # per-project @tier0 (in-repo storage)
+        proj_tier0 = os.path.join(full, "@tier0")
+        s.sudo(["mkdir", "-p", proj_tier0])
+        tier0_link = os.path.join(tier0_root, proj)
+        if safe_remove(tier0_link, f"tier0-{proj}"):
+            mklink(os.path.join("..", proj, "@tier0"), tier0_link, f"tier0-{proj}")
+
         for i, n in enumerate((1, 2, 3)):
             base = tiers[i]
             s.sudo(["mkdir", "-p", os.path.join(base, "shared")])

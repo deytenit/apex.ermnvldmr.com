@@ -4,6 +4,7 @@ every ipv4_address in compositions/*/docker-compose.yml must be unique and insid
 node's /24."""
 import ipaddress, os, re, shutil
 from engine.descriptor import Meta, Flag
+from engine.lib import tier0
 
 METADATA = Meta(summary="Lint docker-compose files (dclint via docker); validate anchor IPs in the node /24.",
                 args=[Flag("--hook", "Only process staged compose files (pre-commit).")])
@@ -12,6 +13,8 @@ def run(ctx, args):
     log, s = ctx.log, ctx.sys
     repo = ctx.paths.repo_root
     rc_ip = _validate_anchor_ips(ctx)
+    rc_t0 = _validate_tier0(ctx)
+    rc_pre = rc_ip or rc_t0
 
     files_string, targets = "", ["."]
     if args.hook:
@@ -20,11 +23,11 @@ def run(ctx, args):
                     "docker-compose*.yml", "docker-compose*.yaml"], check=False, capture=True)
         files_string = (cp.stdout or "").strip()
         if not files_string:
-            log.info("No staged docker-compose files to lint."); return rc_ip
+            log.info("No staged docker-compose files to lint."); return rc_pre
         targets = [f"/workdir/{f}" for f in files_string.splitlines()]
 
     if not shutil.which("docker"):
-        log.error("docker is not installed or not in PATH."); return rc_ip or 1
+        log.error("docker is not installed or not in PATH."); return rc_pre or 1
 
     log.info("Running dclint --fix (via docker)...")
     env_args = []
@@ -34,15 +37,15 @@ def run(ctx, args):
     # "-e commons": never --fix inside the pinned submodule — a dirtied commons makes
     # repository/sync abort the nightly capture-up.
     r = s.run(["docker", "run", "--rm", "--network", "host", *env_args, "-v", f"{repo}:/workdir", "-w", "/workdir", "node:lts-alpine",
-               "npx", "--yes", "dclint", "-e", "@tier1", "-e", "@tier2", "-e", "@tier3", "-e", ".env",
+               "npx", "--yes", "dclint", "-e", "@tier0", "-e", "@tier1", "-e", "@tier2", "-e", "@tier3", "-e", ".env",
                "-e", "commons", "--disable-rule", "no-build-and-image", "-r", "--fix", *targets], check=False)
     if r.returncode != 0:
-        log.error(f"dclint issues (exit {r.returncode})."); return r.returncode or rc_ip
+        log.error(f"dclint issues (exit {r.returncode})."); return r.returncode or rc_pre
     if args.hook and files_string:
         for f in files_string.splitlines():
             s.run(["git", "-C", repo, "add", f], check=False)
     log.success("Lint completed.")
-    return rc_ip
+    return rc_pre
 
 def _validate_anchor_ips(ctx) -> int:
     comp = ctx.paths.compositions
@@ -78,3 +81,15 @@ def _validate_anchor_ips(ctx) -> int:
     if rc == 0:
         ctx.log.info("Anchor IP validation passed.")
     return rc
+
+def _validate_tier0(ctx) -> int:
+    comp = ctx.paths.compositions
+    if not os.path.isdir(comp):
+        return 0
+    errors = tier0.validate_tier0_compositions(comp)
+    for err in errors:
+        ctx.log.error(err)
+    if errors:
+        return 1
+    ctx.log.info("Tier 0 validation passed.")
+    return 0

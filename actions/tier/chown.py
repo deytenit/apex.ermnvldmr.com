@@ -45,6 +45,10 @@ def run(ctx, args):
         log.error(f"Shared group '{SHARED_GROUP}' not found. Run tier/useradd first."); raise SystemExit(1)
 
     log.info("Ensuring base structures owned by root...")
+    tier0_root = ctx.paths.root_tier0
+    if os.path.isdir(tier0_root):
+        s.sudo(["chown", "adam:adam", tier0_root])
+        s.sudo(["chmod", "0770", tier0_root])
     for tp in tiers:
         s.sudo(["chown", "root:root", tp])
         shared = os.path.join(tp, "shared")
@@ -61,8 +65,13 @@ def run(ctx, args):
         # opt-out: .apex-root-owned forces this project's tier data (dir + children,
         # recursively) to root:root — for services that run as root and reject
         # non-root-owned data (e.g. seafile-mc). Blocks noroot ownership entirely.
+        proj_tier0 = os.path.join(full, "@tier0")
         if os.path.isfile(os.path.join(full, ".apex-root-owned")):
             log.info(f"Applying root ownership for {proj} (.apex-root-owned)")
+            if os.path.isdir(proj_tier0):
+                s.sudo(["chown", "-R", "adam:root", proj_tier0])
+                s.sudo(["chmod", "-R", "u+rwX,g+rwX,o-rwx", proj_tier0])
+                log.success(f"  Owned {proj_tier0} (adam:root)")
             for tp in tiers:
                 for d in (os.path.join(tp, proj), os.path.join(tp, "shared", proj)):
                     if os.path.isdir(d):
@@ -76,6 +85,10 @@ def run(ctx, args):
             log.warn(f"Incomplete APEX_UID/GID/SHARED_GID for {proj}. Run tier/useradd first. Skipping.")
             continue
         log.info(f"Applying permissions for {proj} (UID={uid} GID={gid} SHARED_GID={sgid})")
+        if os.path.isdir(proj_tier0):
+            s.sudo(["chown", "-R", f"adam:{gid}", proj_tier0])
+            s.sudo(["chmod", "-R", "u+rwX,g+rwX,o-rwx", proj_tier0])
+            log.success(f"  Owned {proj_tier0} (adam:{gid})")
         for tp in tiers:
             pdir = os.path.join(tp, proj)
             sdir = os.path.join(tp, "shared", proj)

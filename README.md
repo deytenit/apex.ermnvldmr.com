@@ -124,6 +124,23 @@ writes those values to a separate file. These three modes do not merge the
 composition's secrets; use `--sync` for the complete core bridge.
 Choose one output mode per invocation.
 
+### Secret Management & Tier 0
+
+Secrets and declarative configuration live directly in the node repository under
+`compositions/<project>/.enc.env` and `compositions/<project>/@tier0/**/*.enc*`.
+Encrypted with [SOPS](https://github.com/getsops/sops) and `age`, secrets can be decrypted
+and pushed from an operator workstation to a remote node:
+
+```sh
+# Push decrypted .env and @tier0 secrets to adam@node.example.com:/srv/node.example.com
+scripts/secrets --target adam@node.example.com --repo .
+```
+
+`apex repository/sync` automatically re-encrypts modified plaintext `.env` and `@tier0`
+secret files, updates `@tier0/.gitignore`, and enforces `@tier0` guardrails (strict 256 KB
+file-size limit, zero high-churn/state files). Plaintext configurations without secrets remain
+unencrypted and tracked in Git.
+
 ### Preparing an existing host
 
 Run each setup action explicitly from the node checkout. Use `apex --help` to list the shared and node-owned actions. New actions follow `<singular-entity>/<action>`. Use `apex <entity>/<action> --help` for the arguments.

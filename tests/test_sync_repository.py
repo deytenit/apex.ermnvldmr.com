@@ -144,6 +144,35 @@ class RepositorySyncTests(unittest.TestCase):
         committed = self.git("--git-dir=" + str(self.remote), "show", "main:compositions/app/.enc.env")
         self.assertEqual(committed, "SECRET=ENC[AES256_GCM,data:abc]")
 
+    def test_encrypts_modified_tier0_secrets_and_maintains_gitignore(self):
+        (self.repo / ".sops.yaml").write_text("creation_rules:\n  - age: age1test\n")
+        app = self.repo / "compositions/app"
+        t0 = app / "@tier0"
+        t0.mkdir(parents=True)
+        (t0 / "cfg.enc.yaml").write_text("k: old\n")
+        (t0 / "cfg.yaml").write_text("k: updated\n")
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        sops = bin_dir / "sops"
+        sops.write_text('#!/bin/sh\necho "k: ENC[AES256_GCM,data:new]"\n')
+        sops.chmod(0o755)
+        self.env["PATH"] = str(bin_dir) + os.pathsep + self.env["PATH"]
+        with unittest.mock.patch.dict(os.environ, PATH=self.env["PATH"]):
+            self.sync()
+        committed_enc = self.git("--git-dir=" + str(self.remote), "show", "main:compositions/app/@tier0/cfg.enc.yaml")
+        self.assertEqual(committed_enc, "k: ENC[AES256_GCM,data:new]")
+        committed_gi = self.git("--git-dir=" + str(self.remote), "show", "main:compositions/app/@tier0/.gitignore")
+        self.assertIn("/cfg.yaml", committed_gi)
+
+    def test_tier0_oversized_file_blocks_sync(self):
+        (self.repo / ".sops.yaml").write_text("creation_rules:\n  - age: age1test\n")
+        app = self.repo / "compositions/app"
+        t0 = app / "@tier0"
+        t0.mkdir(parents=True)
+        (t0 / "huge.yaml").write_bytes(b"x" * (256 * 1024 + 1))
+        with self.assertRaises(SystemExit):
+            self.sync()
+
 
 if __name__ == "__main__":
     unittest.main()

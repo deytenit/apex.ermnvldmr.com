@@ -12,7 +12,7 @@ services:
     container_name: apex-adguard
     volumes:
       - ${APEX_TIER1}/adguard/data:/opt/adguardhome/work
-      - ${APEX_TIER1}/adguard/conf:/opt/adguardhome/conf
+      - ${APEX_TIER0}/adguard/conf:/opt/adguardhome/conf
     environment:
       <<: *shared-environment
     network_mode: "service:traefik"
@@ -138,7 +138,7 @@ services:
     volumes:
       - ${APEX_TIER1_SHARED}/apex/traefik/letsencrypt:/letsencrypt
       - ${APEX_TIER3}/traefik/logs:/logs
-      - ${APEX_TIER1}/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ${APEX_TIER0}/traefik/dynamic:/etc/traefik/dynamic:ro
     environment:
       <<: *shared-environment
       CF_DNS_API_TOKEN: "${APEX_TRAEFIK_CF_DNS_API_TOKEN:-}"
@@ -202,7 +202,7 @@ services:
     image: ghcr.io/xtls/xray-core:26.9.9
     container_name: apex-xray
     volumes:
-      - ${APEX_TIER1}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
+      - ${APEX_TIER0}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
       - ${APEX_TIER1_SHARED}/apex/letsencrypt:/etc/letsencrypt/live:ro
       - ${APEX_TIER3_SHARED}/apex/xray/log:/var/log/xray/
       - ${APEX_TIER3_SHARED}/apex/xray/shm:/dev/shm/xray/
