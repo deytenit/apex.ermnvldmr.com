@@ -2,7 +2,6 @@
 """ctx.crowdsec — install + config deploy + collections (port of config/crowdsec)."""
 from __future__ import annotations
 import os
-import shutil
 
 
 class Crowdsec:
@@ -10,7 +9,7 @@ class Crowdsec:
         self.log, self.sys, self.tpl, self.host = log, sys_, tpl, host
 
     def ensure_installed(self) -> None:
-        if shutil.which("cscli"):
+        if self.sys.sudo_has_command("cscli"):
             return
         self.log.info("Installing CrowdSec via official script...")
         self.sys.run(["bash", "-c", "set -o pipefail; curl -sSfL https://install.crowdsec.net | sudo sh"],
@@ -19,6 +18,8 @@ class Crowdsec:
 
     def deploy(self, configs_subdir: str, vars: dict, dry_run: bool = False) -> None:
         for rel, content in self.tpl.render_dir(configs_subdir, vars).items():
+            if rel == "collections.txt":
+                continue
             self.host.write_file(os.path.join("/etc/crowdsec", rel), content,
                                  backup=True, dry_run=dry_run, sudo=True)
 

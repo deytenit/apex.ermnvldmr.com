@@ -1,4 +1,3 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -80,8 +79,11 @@ class TestTier0SopsAndGuardrails(unittest.TestCase):
             (t0 / "secret.enc.yaml").write_text("k: ENC[...]\n")
             (t0 / "secret.yaml").write_text("k: plain\n")
 
+            (t0 / "missing.enc.yaml").touch()
+
             errors = tier0.validate_tier0_compositions(comp)
-            self.assertEqual(len(errors), 4)
+            self.assertEqual(len(errors), 5)
+            self.assertTrue(any("missing.enc.yaml" in e and "empty" in e for e in errors))
             self.assertTrue(any("exceeds 256 KB" in e for e in errors))
             self.assertTrue(any("stats.db" in e for e in errors))
             self.assertTrue(any("acme.json" in e for e in errors))

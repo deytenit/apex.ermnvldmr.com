@@ -49,10 +49,34 @@ Configure the node in its checkout. For example, on a stock Debian Docker host:
 apex config/packages
 apex config/base
 apex config/docker
+apex config/ufw --host-only
 apex config/ufw-docker
-apex config/ufw       # apply the node firewall rules
-apex composition/run up       # bring node services online
+apex composition/run up
+apex config/ufw --docker-only
+apex config/crowdsec       # on nodes with configs/crowdsec
 ```
+
+Run the host stage in the operator's SSH session. It stages the SSH allow rule before
+enabling UFW. When the current port is missing from the node's policy, it adds an
+`APEX SSH handover` rule restricted to the connected client and server. After
+verifying a new login on the final port, locate this temporary rule with
+`sudo ufw status numbered` and remove it with `sudo ufw delete <number>`.
+
+The Docker helper covers the node's declared direct subnet, existing Docker
+subnets, and its standard private IPv4 and IPv6 ranges. Rerun its installation
+after adding Docker networks outside those ranges. Reapply `--docker-only` after
+recreating published containers. Each rule in `configs/ufw/docker/*.rules` must
+name a running container and a published port. This stage checks active UFW rules
+against current Docker addresses. If it reports an obsolete helper-managed rule,
+review the numbered rule with `sudo ufw status numbered`, remove it if obsolete,
+and rerun the stage. Plain `config/ufw` applies both sets of rules
+on existing hosts.
+
+CrowdSec nodes can declare one hub collection ID per line in
+`configs/crowdsec/collections.txt`, with blank lines and whole-line `#` comments.
+The file replaces the default selection of `crowdsecurity/linux` and
+`crowdsecurity/traefik`. The action validates the configuration before restarting
+the engine and the node-configured firewall bouncer.
 
 ## Essential Information
 

@@ -21,6 +21,8 @@ def _encrypt_sops_file(ctx, repo: str, plain: Path, enc: Path, in_type: str, out
          "--input-type", in_type, "--output-type", out_type, str(plain)],
         cwd=repo, capture=True,
     )
+    if not result.stdout or not result.stdout.strip():
+        raise RuntimeError(f"SOPS produced empty ciphertext for {rel_enc}.")
     tmp = enc.with_name(f".{enc.name}.tmp")
     tmp.write_text(result.stdout, encoding="utf-8")
     os.chmod(tmp, 0o644)
@@ -36,7 +38,7 @@ def _encrypt_secrets(ctx, repo, compositions):
         return
     for plain in sorted(comp_root.glob("*/.env")):
         enc = plain.with_name(".enc.env")
-        if enc.exists() and plain.stat().st_mtime <= enc.stat().st_mtime:
+        if enc.is_file() and enc.stat().st_size and plain.stat().st_mtime_ns < enc.stat().st_mtime_ns:
             continue
         _encrypt_sops_file(ctx, repo, plain, enc, "dotenv", "dotenv")
 
@@ -57,7 +59,8 @@ def _encrypt_secrets(ctx, repo, compositions):
                 plain = tier0.enc_to_plain(fpath)
                 if not plain.is_file():
                     continue
-                if plain.stat().st_mtime <= fpath.stat().st_mtime:
+                ciphertext = fpath.stat()
+                if ciphertext.st_size and plain.stat().st_mtime_ns < ciphertext.st_mtime_ns:
                     continue
                 if plain.stat().st_size > tier0.MAX_TIER0_BYTES:
                     raise RuntimeError(
@@ -66,8 +69,12 @@ def _encrypt_secrets(ctx, repo, compositions):
                 in_t, out_t = tier0.sops_io_types(plain, fpath, decrypt=False)
                 _encrypt_sops_file(ctx, repo, plain, fpath, in_t, out_t)
 
-    # Validate @tier0 guardrails before staging
+
+def _validate_secret_files(comp_root):
     errors = tier0.validate_tier0_compositions(comp_root)
+    for enc in Path(comp_root).glob("*/.enc.env"):
+        if enc.is_file() and enc.stat().st_size == 0:
+            errors.append(f"{enc}: empty ciphertext")
     if errors:
         raise RuntimeError("Tier 0 guardrail violation(s):\n" + "\n".join(errors))
 
@@ -99,13 +106,12 @@ def run(ctx, args):
         if actual != expected:
             raise RuntimeError("Commons checkout differs from the committed pin; update the submodule before retrying.")
         _encrypt_secrets(ctx, repo, ctx.paths.compositions)
+        _validate_secret_files(ctx.paths.compositions)
         git("add", "-A")
         head_before = git("rev-parse", "HEAD", capture=True).stdout.strip()
-        committed = False
         if git("diff", "--cached", "--quiet", check=False).returncode != 0:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             git("commit", "-m", f"[{node}] Auto-commit: {ts}")
-            committed = True
         else:
             log.info("No changes to commit.")
         git("fetch", "origin", "main")

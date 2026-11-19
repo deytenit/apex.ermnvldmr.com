@@ -151,6 +151,11 @@ class RepositorySyncTests(unittest.TestCase):
         t0.mkdir(parents=True)
         (t0 / "cfg.enc.yaml").write_text("k: old\n")
         (t0 / "cfg.yaml").write_text("k: updated\n")
+        timestamp = (t0 / "cfg.enc.yaml").stat().st_mtime_ns
+        os.utime(t0 / "cfg.yaml", ns=(timestamp, timestamp))
+        (t0 / "empty.enc.yaml").touch()
+        (t0 / "empty.yaml").write_text("k: recovered\n")
+        os.utime(t0 / "empty.yaml", ns=(timestamp - 1000000000, timestamp - 1000000000))
         bin_dir = self.root / "bin"
         bin_dir.mkdir(exist_ok=True)
         sops = bin_dir / "sops"
@@ -163,6 +168,32 @@ class RepositorySyncTests(unittest.TestCase):
         self.assertEqual(committed_enc, "k: ENC[AES256_GCM,data:new]")
         committed_gi = self.git("--git-dir=" + str(self.remote), "show", "main:compositions/app/@tier0/.gitignore")
         self.assertIn("/cfg.yaml", committed_gi)
+        self.assertEqual(self.git("show", "HEAD:compositions/app/@tier0/empty.enc.yaml", cwd=self.repo),
+                         "k: ENC[AES256_GCM,data:new]")
+
+    def test_empty_sops_output_preserves_ciphertext_and_blocks_push(self):
+        (self.repo / ".sops.yaml").write_text("creation_rules: []\n")
+        t0 = self.repo / "compositions/app/@tier0"
+        t0.mkdir(parents=True)
+        enc = t0 / "cfg.enc.yaml"
+        enc.write_text("old ciphertext\n")
+        plain = t0 / "cfg.yaml"
+        plain.write_text("new plaintext\n")
+        timestamp = enc.stat().st_mtime_ns + 1000000000
+        os.utime(plain, ns=(timestamp, timestamp))
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        sops = bin_dir / "sops"
+        sops.write_text("#!/bin/sh\nexit 0\n")
+        sops.chmod(0o755)
+        before = self.git("rev-parse", "main", cwd=self.repo)
+        self.env["PATH"] = str(bin_dir) + os.pathsep + self.env["PATH"]
+        with (unittest.mock.patch.dict(os.environ, PATH=self.env["PATH"]),
+              self.assertRaises(SystemExit)):
+            self.sync()
+        self.assertIn("empty ciphertext", self.ctx.log.error.call_args.args[0])
+        self.assertEqual(enc.read_text(), "old ciphertext\n")
+        self.assertEqual(before, self.git("--git-dir=" + str(self.remote), "rev-parse", "main"))
 
     def test_tier0_oversized_file_blocks_sync(self):
         (self.repo / ".sops.yaml").write_text("creation_rules:\n  - age: age1test\n")

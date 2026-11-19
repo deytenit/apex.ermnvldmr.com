@@ -182,6 +182,8 @@ def validate_tier0_compositions(compositions_dir: Path | str) -> list[str]:
                     )
                 # 3. If a .enc file exists, its plaintext counterpart MUST be listed in @tier0/.gitignore
                 if is_enc_path(fpath):
+                    if size == 0:
+                        errors.append(f"{proj_rel}: empty ciphertext")
                     plain = enc_to_plain(fpath)
                     plain_rel = "/" + plain.relative_to(t0).as_posix()
                     if plain.exists() and plain_rel not in ignored:

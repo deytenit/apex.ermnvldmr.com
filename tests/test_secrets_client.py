@@ -27,6 +27,18 @@ class SecretsClientTest(unittest.TestCase):
         ssh.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > args\ncat > payload\n')
         ssh.chmod(0o700)
 
+    def test_empty_ciphertext_blocks_transfer_before_ssh(self):
+        tier = self.repo / "compositions/apex/@tier0"
+        tier.mkdir()
+        enc = tier / "missing.enc"
+        enc.touch()
+        with mock.patch.dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ["PATH"]):
+            run = subprocess.run([str(self.launcher), "--target", "adam@node", "--repo", str(self.repo)],
+                                 cwd=self.root, capture_output=True, text=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("empty ciphertext", run.stderr)
+        self.assertFalse((self.root / "payload").exists())
+
     def test_decrypts_and_streams_via_stdin(self):
         with mock.patch.dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ["PATH"]):
             run = subprocess.run(

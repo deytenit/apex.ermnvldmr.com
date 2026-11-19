@@ -1,10 +1,12 @@
 """Install the pinned ufw-docker integration on Docker hosts."""
 import hashlib
+import ipaddress
+import json
 import os
-from pathlib import Path
 import stat
 import urllib.request
 from engine.descriptor import Meta
+from engine.lib.ufw import PINNED_HELPER as UFW_DOCKER_PATH
 
 METADATA = Meta(summary="Install the pinned Docker integration for UFW.")
 UFW_DOCKER_REVISION = "020a8699f95592561f254d8d4ad1bb40d401dfc7"
@@ -13,7 +15,8 @@ UFW_DOCKER_URL = (
     "https://raw.githubusercontent.com/chaifeng/ufw-docker/"
     + UFW_DOCKER_REVISION + "/ufw-docker"
 )
-UFW_DOCKER_PATH = Path("/usr/local/bin/ufw-docker")
+
+
 def _check_helper_path(path):
     for parent in reversed(path.parents):
         info = parent.lstat()
@@ -30,7 +33,7 @@ def _check_helper_path(path):
     return True
 
 
-def _install_helper(ctx):
+def _install_helper(ctx, subnets):
     path = UFW_DOCKER_PATH
     exists = _check_helper_path(path)
     payload = path.read_bytes() if exists else None
@@ -52,7 +55,23 @@ def _install_helper(ctx):
             stat.S_IMODE(path.stat().st_mode) != 0o755):
         raise RuntimeError("ufw-docker verification failed; refusing execution.")
     ctx.log.info("Ensuring ufw-docker routing rules are installed in UFW...")
-    ctx.sys.sudo([str(path), "install"])
+    ctx.sys.sudo([str(path), "install", "--docker-subnets", *subnets])
+
+
+def _subnets(ctx):
+    # Supplying any custom subnet replaces all of the helper's defaults, including IPv6.
+    subnets = {ipaddress.ip_network(cidr) for cidr in
+               ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fd00::/8")}
+    if ctx.node:
+        subnets.add(ipaddress.ip_network(ctx.node.subnet))
+    networks = ctx.sys.sudo(["docker", "network", "ls", "-q"], capture=True).stdout.split()
+    if networks:
+        result = ctx.sys.sudo(["docker", "network", "inspect", *networks], capture=True)
+        for network in json.loads(result.stdout):
+            for pool in network["IPAM"].get("Config") or []:
+                if pool.get("Subnet"):
+                    subnets.add(ipaddress.ip_network(pool["Subnet"]))
+    return [str(net) for net in sorted(subnets, key=lambda n: (n.version, n))]
 
 
 def run(ctx, args):
@@ -60,6 +79,11 @@ def run(ctx, args):
     if os.path.exists("/usr/bin/pveversion"):
         raise RuntimeError("Use the Proxmox firewall on a PVE host.")
     for binary in ("ufw", "docker"):
-        if not ctx.sys.ok(["which", binary]):
+        if not ctx.sys.sudo_has_command(binary):
             raise RuntimeError(f"Install {binary} before configuring ufw-docker.")
-    _install_helper(ctx)
+    if not ctx.ufw.is_active():
+        raise RuntimeError("Activate UFW with config/ufw --host-only before installing ufw-docker.")
+    _install_helper(ctx, _subnets(ctx))
+    ctx.sys.sudo(["ufw", "reload"])
+    if not ctx.ufw.is_active():
+        raise RuntimeError("UFW is inactive after loading the Docker rules.")

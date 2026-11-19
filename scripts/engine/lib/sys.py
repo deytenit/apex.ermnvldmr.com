@@ -26,6 +26,11 @@ class Sys:
             return self.run(cmd, **kw)
         return self.run(["sudo", *cmd], **kw)
 
+    def sudo_has_command(self, binary: str) -> bool:
+        result = self.sudo(["/bin/sh", "-c", 'command -v "$1"', "sh", binary],
+                           capture=True, check=False)
+        return result.returncode == 0
+
     def ok(self, cmd: Sequence[str], **kw) -> bool:
         """Run, return True on exit 0, never raising."""
         return self.run(cmd, check=False, **kw).returncode == 0

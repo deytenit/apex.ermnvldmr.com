@@ -118,6 +118,7 @@ class TestPinnedHelper(unittest.TestCase):
         self.path = self.root / "bin" / "ufw-docker"
         self.path.parent.mkdir()
         self.payload = b"#!/bin/sh\nprintf 'verified fixture\\n'\n"
+        self.subnets = ["203.0.113.0/24"]
         self.wrong_owner = None
         self.wrong_group = None
         self.system = Mock()
@@ -145,7 +146,7 @@ class TestPinnedHelper(unittest.TestCase):
     def sudo(self, command, **kwargs):
         if command[:3] == ["python3", "-I", "-c"]:
             return subprocess.run([sys.executable, *command[1:]], check=True, text=True, **kwargs)
-        self.assertEqual(command, [str(self.path), "install"])
+        self.assertEqual(command, [str(self.path), "install", "--docker-subnets", *self.subnets])
         self.assertEqual(self.path.read_bytes(), self.payload)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o755)
         return subprocess.CompletedProcess(command, 0)
@@ -156,27 +157,27 @@ class TestPinnedHelper(unittest.TestCase):
 
     def test_verified_existing_helper_executes_without_download(self):
         self.write_helper()
-        helper._install_helper(self.ctx)
+        helper._install_helper(self.ctx, self.subnets)
         self.download.assert_not_called()
-        self.assertEqual(self.system.sudo.call_args.args[0], [str(self.path), "install"])
+        self.assertEqual(self.system.sudo.call_args.args[0], [str(self.path), "install", "--docker-subnets", *self.subnets])
         self.assertEqual(self.system.sudo.call_count, 1)
 
     def test_wrong_executable_content_is_replaced_only_with_verified_download(self):
         self.write_helper(b"#!/bin/sh\necho wrong\n")
-        helper._install_helper(self.ctx)
+        helper._install_helper(self.ctx, self.subnets)
         self.assertEqual(self.path.read_bytes(), self.payload)
         self.assertEqual(self.system.sudo.call_count, 2)
         self.download.assert_called_once_with(helper.UFW_DOCKER_URL, timeout=30)
 
     def test_missing_helper_is_published_with_executable_mode(self):
-        helper._install_helper(self.ctx)
+        helper._install_helper(self.ctx, self.subnets)
         self.assertEqual(self.path.read_bytes(), self.payload)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o755)
         self.assertEqual(list(self.path.parent.iterdir()), [self.path])
 
     def test_verified_nonexecutable_content_is_reused_and_mode_repaired(self):
         self.write_helper(mode=0o600)
-        helper._install_helper(self.ctx)
+        helper._install_helper(self.ctx, self.subnets)
         self.download.assert_not_called()
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o755)
         self.assertEqual(self.system.sudo.call_count, 2)
@@ -184,7 +185,7 @@ class TestPinnedHelper(unittest.TestCase):
     def test_bad_checksum_never_publishes_or_executes(self):
         self.download.return_value = io.BytesIO(b"not the pinned helper")
         with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
-            helper._install_helper(self.ctx)
+            helper._install_helper(self.ctx, self.subnets)
         self.system.sudo.assert_not_called()
         self.assertFalse(self.path.exists())
 
@@ -192,13 +193,13 @@ class TestPinnedHelper(unittest.TestCase):
         self.write_helper(b"old unknown executable")
         self.download.return_value = io.BytesIO(b"bad download")
         with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
-            helper._install_helper(self.ctx)
+            helper._install_helper(self.ctx, self.subnets)
         self.system.sudo.assert_not_called()
         self.assertEqual(self.path.read_bytes(), b"old unknown executable")
 
     def assert_rejected_before_network_or_sudo(self):
         with self.assertRaisesRegex(RuntimeError, "Unsafe ufw-docker"):
-            helper._install_helper(self.ctx)
+            helper._install_helper(self.ctx, self.subnets)
         self.download.assert_not_called()
         self.system.sudo.assert_not_called()
 
@@ -266,7 +267,7 @@ class TestPinnedHelper(unittest.TestCase):
 
         self.download.side_effect = download
         with self.assertRaisesRegex(RuntimeError, "Unsafe ufw-docker"):
-            helper._install_helper(self.ctx)
+            helper._install_helper(self.ctx, self.subnets)
         self.system.sudo.assert_not_called()
 
     def test_changed_content_after_publication_is_not_executed(self):
@@ -279,7 +280,7 @@ class TestPinnedHelper(unittest.TestCase):
 
         self.system.sudo.side_effect = tamper
         with self.assertRaisesRegex(RuntimeError, "verification failed"):
-            helper._install_helper(self.ctx)
+            helper._install_helper(self.ctx, self.subnets)
         self.assertEqual(self.system.sudo.call_count, 1)
 
 
