@@ -199,26 +199,37 @@ services:
     security_opt:
       - no-new-privileges:true
   xray:
-    image: ghcr.io/xtls/xray-core:26.9.9
+    image: ${APEX_XRAY_IMAGE:-git.ermnvldmr.com/deytenit/xrealm:26.11.9}
     container_name: apex-xray
     volumes:
-      - ${APEX_TIER0}/xray/data/config.jsonc:/etc/xray/config.jsonc:ro
+      - ${APEX_TIER0}/xray/conf.d:/etc/xray/conf.d:ro
+      - ${APEX_TIER0}/xray/xrealm.yaml:/etc/xrealm/xrealm.yaml:ro
+      - ${APEX_TIER1}/xray:/var/lib/xrealm
       - ${APEX_TIER1_SHARED}/apex/letsencrypt:/etc/letsencrypt/live:ro
       - ${APEX_TIER3_SHARED}/apex/xray/log:/var/log/xray/
       - ${APEX_TIER3_SHARED}/apex/xray/shm:/dev/shm/xray/
     environment:
       <<: *shared-environment
+      XREALM_LISTEN: "${APEX_XRAY_LISTEN:-}"
+      XREALM_SUB_TOKEN: "${APEX_XRAY_SUB_TOKEN:-}"
+      XREALM_METRICS_LISTEN: "${APEX_XRAY_METRICS_LISTEN:-}"
+      XREALM_METRICS_USER_TRAFFIC: "${APEX_XRAY_METRICS_USER_TRAFFIC:-true}"
+      XREALM_METRICS_ACCESS_LOG: "${APEX_XRAY_METRICS_ACCESS_LOG:-}"
+      XREALM_METRICS_GEOIP_DB: "${APEX_XRAY_METRICS_GEOIP_DB:-}"
+      XREALM_XRAY_API: "${APEX_XRAY_API:-}"
     network_mode: "host"
-    command: [ "-c", "/etc/xray/config.jsonc" ]
     restart: unless-stopped
     labels:
-      # backup (resticontainer): xray config only (logs + shm are ephemeral)
+      # backup (resticontainer): xray conf.d + xrealm config + persistent state (logs + shm are ephemeral)
       - "restic.enable=true"
-      - "restic.backup.paths=/etc/xray/config.jsonc"
+      - "restic.backup.paths=/etc/xray/conf.d,/etc/xrealm/xrealm.yaml,/var/lib/xrealm"
     user: "0:0"
     profiles: [ xray ]
+    read_only: true
     security_opt:
       - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
 
 networks:
   direct:

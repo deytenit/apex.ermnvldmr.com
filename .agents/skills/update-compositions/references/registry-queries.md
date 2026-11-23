@@ -72,7 +72,25 @@ print("\n".join(tags[:30]))
 
 ---
 
-## 4. SemVer Matching & Sorting
+## 4. Generic OCI v2 / Gitea Container Registry
+
+For self-hosted OCI v2 registries (such as Gitea Container Registry) that expose public `/v2/<owner>/<image>/tags/list`:
+
+```bash
+REGISTRY="git.example.com"
+IMAGE="owner/xrealm"
+curl -s "https://${REGISTRY}/v2/${IMAGE}/tags/list" \
+  | python3 -c '
+import sys, json
+data = json.load(sys.stdin)
+tags = [t for t in data.get("tags", []) if t != "latest"]
+print("\n".join(sorted(tags, reverse=True)[:30]))
+'
+```
+
+---
+
+## 5. SemVer Matching & Sorting
 
 When filtering tags to find the latest stable version matching the current container's flavor:
 
